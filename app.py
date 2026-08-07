@@ -291,16 +291,10 @@ with menu_col:
             with col_c:
                 st.session_state.order_type = st.selectbox("Order Type", ["Dine In", "Takeaway", "Delivery"])
         
-        # Menu Tabs
+        # Menu Tabs - SIMPLIFIED VERSION WITHOUT CALLBACK ISSUES
         tabs = st.tabs(list(MENU.keys()))
         for tab, category in zip(tabs, MENU.keys()):
             with tab:
-                # Category header with order count
-                total_category_items = sum(1 for item in MENU[category] 
-                                         if st.session_state.get(f"qty_{category}_{item}", 0) > 0)
-                if total_category_items > 0:
-                    st.info(f"🛒 {total_category_items} items in cart from this category")
-                
                 for item, price in MENU[category].items():
                     col_item, col_price, col_qty = st.columns([3, 1, 2])
                     
@@ -316,39 +310,44 @@ with menu_col:
                     with col_qty:
                         qty_key = f"qty_{category}_{item}"
                         
-                        # FIX: Initialize qty_key if it doesn't exist
+                        # Initialize qty_key if it doesn't exist
                         if qty_key not in st.session_state:
                             st.session_state[qty_key] = 0
                         
-                        col_minus, col_num, col_plus = st.columns([1, 2, 1])
-                        
-                        # FIX: Use callbacks instead of direct manipulation
-                        def decrement_qty(key=item, qk=qty_key):
-                            if st.session_state[qk] > 0:
-                                st.session_state[qk] -= 1
-                                if st.session_state[qk] == 0:
-                                    remove_from_cart(key)
-                                else:
-                                    if key in st.session_state.cart:
-                                        st.session_state.cart[key]["qty"] = st.session_state[qk]
-                        
-                        def increment_qty(key=item, qk=qty_key, p=price):
-                            if st.session_state[qk] < st.session_state.inventory[key]["stock"]:
-                                st.session_state[qk] += 1
-                                add_to_cart(key, p, 1)
-                        
-                        if col_minus.button("−", key=f"minus_{qty_key}", disabled=st.session_state[qty_key] == 0):
-                            decrement_qty()
-                            st.rerun()
-                        
-                        col_num.number_input("", key=qty_key, min_value=0, 
-                                            max_value=st.session_state.inventory[item]["stock"], 
-                                            step=1, label_visibility="collapsed")
-                        
-                        if col_plus.button("+", key=f"plus_{qty_key}", 
-                                         disabled=st.session_state[qty_key] >= st.session_state.inventory[item]["stock"]):
-                            increment_qty()
-                            st.rerun()
+                        # Use a container for the quantity controls
+                        qty_container = st.container()
+                        with qty_container:
+                            # Three columns for - | number | +
+                            c1, c2, c3 = st.columns([1, 2, 1])
+                            
+                            # Minus button
+                            if c1.button("−", key=f"minus_{qty_key}", 
+                                       disabled=st.session_state[qty_key] == 0,
+                                       use_container_width=True):
+                                if st.session_state[qty_key] > 0:
+                                    st.session_state[qty_key] -= 1
+                                    if st.session_state[qty_key] == 0:
+                                        remove_from_cart(item)
+                                    else:
+                                        if item in st.session_state.cart:
+                                            st.session_state.cart[item]["qty"] = st.session_state[qty_key]
+                                    st.rerun()
+                            
+                            # Number input
+                            c2.number_input("", key=qty_key, 
+                                          min_value=0, 
+                                          max_value=st.session_state.inventory[item]["stock"], 
+                                          step=1, 
+                                          label_visibility="collapsed")
+                            
+                            # Plus button
+                            if c3.button("+", key=f"plus_{qty_key}", 
+                                       disabled=st.session_state[qty_key] >= st.session_state.inventory[item]["stock"],
+                                       use_container_width=True):
+                                if st.session_state[qty_key] < st.session_state.inventory[item]["stock"]:
+                                    st.session_state[qty_key] += 1
+                                    add_to_cart(item, price, 1)
+                                    st.rerun()
 
 with cart_col:
     st.subheader("🧾 Current Order")
