@@ -82,7 +82,7 @@ def save_order_to_db(order):
         order["order_id"],
         order["date"],
         order["time"],
-        json.dumps(order["items"]),  # Store items as JSON
+        json.dumps(order["items"]),
         order["subtotal"],
         order["tax_rate"],
         order["tax_amount"],
@@ -105,7 +105,7 @@ def load_orders_from_db():
             "order_id": row[0],
             "date": row[1],
             "time": row[2],
-            "items": json.loads(row[3]),  # Parse JSON back to list
+            "items": json.loads(row[3]),
             "subtotal": row[4],
             "tax_rate": row[5],
             "tax_amount": row[6],
@@ -123,6 +123,9 @@ if "cart" not in st.session_state:
 if "order_placed" not in st.session_state:
     st.session_state.order_placed = False
 
+if "order_just_placed" not in st.session_state:
+    st.session_state.order_just_placed = False
+
 # Load orders from database
 if "daily_orders" not in st.session_state:
     st.session_state.daily_orders = load_orders_from_db()
@@ -133,6 +136,10 @@ if "menu_qty" not in st.session_state:
 
 if "items_added" not in st.session_state:
     st.session_state.items_added = set()
+
+# Track the last order total for display
+if "last_order_total" not in st.session_state:
+    st.session_state.last_order_total = 0
 
 
 def add_to_cart(item, price, qty=1):
@@ -170,7 +177,12 @@ def clear_cart():
     """Clear the entire cart"""
     st.session_state.cart = {}
     st.session_state.order_placed = False
+    st.session_state.order_just_placed = False
     st.session_state.items_added = set()
+    # Reset menu quantities
+    for key in list(st.session_state.keys()):
+        if key.startswith("qty_"):
+            st.session_state[key] = 0
 
 
 def save_order_to_history():
@@ -212,6 +224,7 @@ def save_order_to_history():
     
     # Save to session state
     st.session_state.daily_orders.append(order)
+    st.session_state.last_order_total = grand_total
     
     # Save to database
     save_order_to_db(order)
@@ -231,7 +244,6 @@ st.components.v1.html(f"""
     <script>
         function updateClock() {{
             const now = new Date();
-            // Pakistan is UTC+5
             const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
             const pakistan = new Date(utc + (5 * 3600000));
             const options = {{ 
@@ -260,9 +272,22 @@ if page == "📋 Take Order":
 
     with menu_col:
         st.subheader("📋 Menu")
+        
+        # If order was just placed, show a success message and option to start new order
+        if st.session_state.get("order_just_placed", False):
+            st.success(f"✅ Order placed successfully! Total: Rs. {st.session_state.last_order_total}")
+            if st.button("🆕 Start New Order", use_container_width=True):
+                clear_cart()
+                st.session_state.order_just_placed = False
+                st.rerun()
+            st.divider()
+        
         tabs = st.tabs(list(MENU.keys()))
         for tab, category in zip(tabs, MENU.keys()):
             with tab:
+                # Disable menu items if order was just placed
+                disabled = st.session_state.get("order_just_placed", False)
+                
                 for item, price in MENU[category].items():
                     c1, c2, c3, c4, c5 = st.columns([2, 1, 0.5, 0.5, 0.5])
                     c1.write(f"**{item}**")
@@ -274,10 +299,9 @@ if page == "📋 Take Order":
                         st.session_state[qty_key] = 0
                     
                     # Minus button
-                    if c3.button("➖", key=f"minus_{category}_{item}"):
+                    if c3.button("➖", key=f"minus_{category}_{item}", disabled=disabled):
                         if st.session_state[qty_key] > 0:
                             st.session_state[qty_key] -= 1
-                            # Remove from cart if quantity is 0
                             if st.session_state[qty_key] == 0:
                                 if item in st.session_state.cart:
                                     del st.session_state.cart[item]
@@ -286,10 +310,9 @@ if page == "📋 Take Order":
                     # Quantity display
                     c4.markdown(f"<div style='text-align: center; padding: 5px; font-weight: bold;'>{st.session_state[qty_key]}</div>", unsafe_allow_html=True)
                     
-                    # Plus button - AUTOMATICALLY ADD TO CART
-                    if c5.button("➕", key=f"plus_{category}_{item}"):
+                    # Plus button
+                    if c5.button("➕", key=f"plus_{category}_{item}", disabled=disabled):
                         st.session_state[qty_key] += 1
-                        # Automatically add to cart
                         add_to_cart(item, price, 1)
                         st.rerun()
 
@@ -311,9 +334,8 @@ if page == "📋 Take Order":
                 c2.write(f"Rs. {line_total}")
                 
                 # Minus button in cart
-                if c3.button("➖", key=f"cart_minus_{item}"):
+                if c3.button("➖", key=f"cart_minus_{item}", disabled=st.session_state.get("order_just_placed", False)):
                     decrease_qty(item)
-                    # Update menu quantity
                     for category in MENU:
                         if item in MENU[category]:
                             qty_key = f"qty_{category}_{item}"
@@ -325,9 +347,8 @@ if page == "📋 Take Order":
                 c4.markdown(f"<div style='text-align: center; font-size: 14px;'>{qty}</div>", unsafe_allow_html=True)
                 
                 # Plus button in cart
-                if c5.button("➕", key=f"cart_plus_{item}"):
+                if c5.button("➕", key=f"cart_plus_{item}", disabled=st.session_state.get("order_just_placed", False)):
                     increase_qty(item, price)
-                    # Update menu quantity
                     for category in MENU:
                         if item in MENU[category]:
                             qty_key = f"qty_{category}_{item}"
@@ -337,7 +358,7 @@ if page == "📋 Take Order":
 
             st.divider()
             
-            tax_rate = st.number_input("Tax / Service %", min_value=0, max_value=30, value=0, step=1)
+            tax_rate = st.number_input("Tax / Service %", min_value=0, max_value=30, value=0, step=1, disabled=st.session_state.get("order_just_placed", False))
             st.session_state["tax_rate"] = tax_rate
             tax_amount = round(total * tax_rate / 100)
             grand_total = total + tax_amount
@@ -348,19 +369,22 @@ if page == "📋 Take Order":
 
             col_a, col_b = st.columns(2)
             with col_a:
-                if st.button("✅ Place Order", use_container_width=True):
-                    save_order_to_history()
-                    st.session_state.order_placed = True
-                    st.success(f"✅ Order placed successfully! Grand Total: Rs. {grand_total}")
-                    # Clear cart after placing order
-                    clear_cart()
-                    st.rerun()
+                if st.button("✅ Place Order", use_container_width=True, disabled=st.session_state.get("order_just_placed", False)):
+                    if st.session_state.cart:
+                        save_order_to_history()
+                        st.session_state.order_placed = True
+                        st.session_state.order_just_placed = True
+                        st.success(f"✅ Order placed successfully! Grand Total: Rs. {grand_total}")
+                        st.rerun()
+                    else:
+                        st.warning("Cart is empty!")
             with col_b:
-                if st.button("🗑️ Clear Order", use_container_width=True):
+                if st.button("🗑️ Clear Order", use_container_width=True, disabled=st.session_state.get("order_just_placed", False)):
                     clear_cart()
                     st.rerun()
 
-    if st.session_state.order_placed and st.session_state.cart:
+    # Show receipt after order is placed
+    if st.session_state.get("order_just_placed", False) and st.session_state.cart:
         st.divider()
         st.subheader("🖨️ Bill / Receipt")
 
@@ -397,13 +421,20 @@ if page == "📋 Take Order":
 
         st.code(receipt_text, language=None)
 
-        st.download_button(
-            "⬇️ Download Receipt (.txt)",
-            data=receipt_text,
-            file_name=f"receipt_{get_pakistan_time().strftime('%Y%m%d_%H%M%S')}.txt",
-            mime="text/plain",
-            use_container_width=True
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                "⬇️ Download Receipt (.txt)",
+                data=receipt_text,
+                file_name=f"receipt_{get_pakistan_time().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
+        with col2:
+            if st.button("🆕 Start New Order", use_container_width=True):
+                clear_cart()
+                st.session_state.order_just_placed = False
+                st.rerun()
 
 elif page == "📊 Sales Report":
     st.subheader("📊 Daily Sales Report")
