@@ -13,7 +13,8 @@ import json
 
 st.set_page_config(page_title="Affan's Kitchen - POS", page_icon="🍲", layout="wide")
 
-MENU = {
+# Default menu structure
+DEFAULT_MENU = {
     "Breakfast": {
         "Aloo Paratha": 150,
         "Chana": 120,
@@ -50,11 +51,12 @@ def get_pakistan_time():
     """Get current time in Pakistan (UTC+5)"""
     return datetime.utcnow() + PAKISTAN_OFFSET
 
-# Initialize databases
+# Initialize database
 def init_db():
-    # Orders database
     conn = sqlite3.connect('orders.db')
     c = conn.cursor()
+    
+    # Orders table
     c.execute('''
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,25 +71,128 @@ def init_db():
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    conn.commit()
-    conn.close()
     
-    # Inventory database
-    conn = sqlite3.connect('inventory.db')
-    c = conn.cursor()
+    # Menu/Inventory table
     c.execute('''
-        CREATE TABLE IF NOT EXISTS inventory (
+        CREATE TABLE IF NOT EXISTS menu (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_name TEXT UNIQUE,
-            category TEXT,
-            quantity REAL,
-            unit TEXT,
-            min_stock REAL,
-            cost_per_unit REAL,
-            last_updated TEXT,
-            notes TEXT
+            category TEXT NOT NULL,
+            item_name TEXT NOT NULL,
+            price REAL NOT NULL,
+            active INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(category, item_name)
         )
     ''')
+    
+    # Initialize default menu if empty
+    c.execute('SELECT COUNT(*) FROM menu')
+    if c.fetchone()[0] == 0:
+        for category, items in DEFAULT_MENU.items():
+            for item_name, price in items.items():
+                c.execute('''
+                    INSERT INTO menu (category, item_name, price)
+                    VALUES (?, ?, ?)
+                ''', (category, item_name, price))
+    
+    conn.commit()
+    conn.close()
+
+def load_menu_from_db():
+    """Load menu from database"""
+    conn = sqlite3.connect('orders.db')
+    c = conn.cursor()
+    c.execute('SELECT category, item_name, price, active FROM menu ORDER BY category, item_name')
+    rows = c.fetchall()
+    conn.close()
+    
+    menu = {}
+    for row in rows:
+        category, item_name, price, active = row
+        if active:  # Only load active items
+            if category not in menu:
+                menu[category] = {}
+            menu[category][item_name] = price
+    return menu
+
+def add_menu_item(category, item_name, price):
+    """Add a new item to menu"""
+    conn = sqlite3.connect('orders.db')
+    c = conn.cursor()
+    try:
+        c.execute('''
+            INSERT INTO menu (category, item_name, price)
+            VALUES (?, ?, ?)
+        ''', (category, item_name, price))
+        conn.commit()
+        return True, "Item added successfully!"
+    except sqlite3.IntegrityError:
+        return False, "Item already exists in this category!"
+    finally:
+        conn.close()
+
+def update_menu_item(category, item_name, new_price, new_name=None):
+    """Update an existing menu item's price or name"""
+    conn = sqlite3.connect('orders.db')
+    c = conn.cursor()
+    try:
+        if new_name and new_name != item_name:
+            # Update both name and price
+            c.execute('''
+                UPDATE menu 
+                SET item_name = ?, price = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE category = ? AND item_name = ?
+            ''', (new_name, new_price, category, item_name))
+        else:
+            # Update only price
+            c.execute('''
+                UPDATE menu 
+                SET price = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE category = ? AND item_name = ?
+            ''', (new_price, category, item_name))
+        conn.commit()
+        return True, "Item updated successfully!"
+    except Exception as e:
+        return False, f"Error updating item: {str(e)}"
+    finally:
+        conn.close()
+
+def toggle_menu_item(category, item_name, active):
+    """Activate or deactivate a menu item"""
+    conn = sqlite3.connect('orders.db')
+    c = conn.cursor()
+    c.execute('''
+        UPDATE menu 
+        SET active = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE category = ? AND item_name = ?
+    ''', (active, category, item_name))
+    conn.commit()
+    conn.close()
+
+def get_all_categories():
+    """Get all unique categories"""
+    conn = sqlite3.connect('orders.db')
+    c = conn.cursor()
+    c.execute('SELECT DISTINCT category FROM menu ORDER BY category')
+    categories = [row[0] for row in c.fetchall()]
+    conn.close()
+    return categories
+
+def get_all_menu_items():
+    """Get all menu items (including inactive)"""
+    conn = sqlite3.connect('orders.db')
+    c = conn.cursor()
+    c.execute('SELECT category, item_name, price, active FROM menu ORDER BY category, item_name')
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def delete_menu_item(category, item_name):
+    """Delete a menu item completely"""
+    conn = sqlite3.connect('orders.db')
+    c = conn.cursor()
+    c.execute('DELETE FROM menu WHERE category = ? AND item_name = ?', (category, item_name))
     conn.commit()
     conn.close()
 
@@ -150,79 +255,11 @@ def delete_all_orders_from_db():
     conn.commit()
     conn.close()
 
-# Inventory database functions
-def add_inventory_item(item_name, category, quantity, unit, min_stock, cost_per_unit, notes=""):
-    """Add a new item to inventory"""
-    conn = sqlite3.connect('inventory.db')
-    c = conn.cursor()
-    last_updated = get_pakistan_time().strftime("%d-%m-%Y %I:%M %p")
-    try:
-        c.execute('''
-            INSERT INTO inventory (item_name, category, quantity, unit, min_stock, cost_per_unit, last_updated, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (item_name, category, quantity, unit, min_stock, cost_per_unit, last_updated, notes))
-        conn.commit()
-        conn.close()
-        return True, "Item added successfully!"
-    except sqlite3.IntegrityError:
-        conn.close()
-        return False, "Item already exists!"
-
-def update_inventory_quantity(item_id, new_quantity):
-    """Update quantity of an inventory item"""
-    conn = sqlite3.connect('inventory.db')
-    c = conn.cursor()
-    last_updated = get_pakistan_time().strftime("%d-%m-%Y %I:%M %p")
-    c.execute('UPDATE inventory SET quantity = ?, last_updated = ? WHERE id = ?', (new_quantity, last_updated, item_id))
-    conn.commit()
-    conn.close()
-
-def update_inventory_item(item_id, item_name, category, quantity, unit, min_stock, cost_per_unit, notes):
-    """Update all fields of an inventory item"""
-    conn = sqlite3.connect('inventory.db')
-    c = conn.cursor()
-    last_updated = get_pakistan_time().strftime("%d-%m-%Y %I:%M %p")
-    c.execute('''
-        UPDATE inventory 
-        SET item_name = ?, category = ?, quantity = ?, unit = ?, min_stock = ?, cost_per_unit = ?, last_updated = ?, notes = ?
-        WHERE id = ?
-    ''', (item_name, category, quantity, unit, min_stock, cost_per_unit, last_updated, notes, item_id))
-    conn.commit()
-    conn.close()
-
-def delete_inventory_item(item_id):
-    """Delete an inventory item"""
-    conn = sqlite3.connect('inventory.db')
-    c = conn.cursor()
-    c.execute('DELETE FROM inventory WHERE id = ?', (item_id,))
-    conn.commit()
-    conn.close()
-
-def load_inventory():
-    """Load all inventory items"""
-    conn = sqlite3.connect('inventory.db')
-    c = conn.cursor()
-    c.execute('SELECT * FROM inventory ORDER BY category, item_name')
-    rows = c.fetchall()
-    conn.close()
-    
-    inventory = []
-    for row in rows:
-        inventory.append({
-            "id": row[0],
-            "item_name": row[1],
-            "category": row[2],
-            "quantity": row[3],
-            "unit": row[4],
-            "min_stock": row[5],
-            "cost_per_unit": row[6],
-            "last_updated": row[7],
-            "notes": row[8]
-        })
-    return inventory
-
-# Initialize databases
+# Initialize database
 init_db()
+
+# Load current menu
+MENU = load_menu_from_db()
 
 # Initialize session state
 if "cart" not in st.session_state:
@@ -249,15 +286,8 @@ if "delete_confirm" not in st.session_state:
 if "delete_all_confirm" not in st.session_state:
     st.session_state.delete_all_confirm = False
 
-# Inventory session states
-if "inv_delete_confirm" not in st.session_state:
-    st.session_state.inv_delete_confirm = None
-
-if "editing_item" not in st.session_state:
-    st.session_state.editing_item = None
-
-if "inventory" not in st.session_state:
-    st.session_state.inventory = load_inventory()
+if "inventory_editing" not in st.session_state:
+    st.session_state.inventory_editing = None
 
 
 def add_to_cart(item, price, qty=1):
@@ -349,6 +379,7 @@ st.markdown(f"# 🍲 {RESTAURANT_NAME}")
 st.caption(RESTAURANT_TAGLINE)
 st.caption(f"🕐 Pakistan Time: {current_time.strftime('%d-%m-%Y %I:%M %p')}")
 
+# Show live clock
 st.components.v1.html(f"""
     <div style="text-align: right; font-size: 16px; color: #666; padding: 5px;">
         <span id="live-clock"></span>
@@ -377,39 +408,46 @@ st.components.v1.html(f"""
 st.divider()
 
 # Navigation
-page = st.sidebar.selectbox("📌 Navigation", ["📋 Take Order", "📊 Sales Report", "📦 Inventory"])
+page = st.sidebar.selectbox("📌 Navigation", ["📋 Take Order", "📊 Sales Report", "📦 Inventory Management"])
 
 if page == "📋 Take Order":
+    # Reload menu to get latest changes
+    MENU = load_menu_from_db()
+    
     menu_col, cart_col = st.columns([2, 1])
 
     with menu_col:
         st.subheader("📋 Menu")
-        tabs = st.tabs(list(MENU.keys()))
-        for tab, category in zip(tabs, MENU.keys()):
-            with tab:
-                for item, price in MENU[category].items():
-                    c1, c2, c3, c4, c5 = st.columns([2, 1, 0.5, 0.5, 0.5])
-                    c1.write(f"**{item}**")
-                    c2.write(f"Rs. {price}")
-                    
-                    qty_key = f"qty_{category}_{item}"
-                    if qty_key not in st.session_state:
-                        st.session_state[qty_key] = 0
-                    
-                    if c3.button("➖", key=f"minus_{category}_{item}"):
-                        if st.session_state[qty_key] > 0:
-                            st.session_state[qty_key] -= 1
-                            if item in st.session_state.cart:
-                                decrease_qty(item)
-                                st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
-                        st.rerun()
-                    
-                    c4.markdown(f"<div style='text-align: center; padding: 5px; font-weight: bold;'>{st.session_state[qty_key]}</div>", unsafe_allow_html=True)
-                    
-                    if c5.button("➕", key=f"plus_{category}_{item}"):
-                        st.session_state[qty_key] += 1
-                        add_to_cart(item, price, 1)
-                        st.rerun()
+        
+        if not MENU:
+            st.warning("No menu items available. Please add items in Inventory Management.")
+        else:
+            tabs = st.tabs(list(MENU.keys()))
+            for tab, category in zip(tabs, MENU.keys()):
+                with tab:
+                    for item, price in MENU[category].items():
+                        c1, c2, c3, c4, c5 = st.columns([2, 1, 0.5, 0.5, 0.5])
+                        c1.write(f"**{item}**")
+                        c2.write(f"Rs. {price}")
+                        
+                        qty_key = f"qty_{category}_{item}"
+                        if qty_key not in st.session_state:
+                            st.session_state[qty_key] = 0
+                        
+                        if c3.button("➖", key=f"minus_{category}_{item}"):
+                            if st.session_state[qty_key] > 0:
+                                st.session_state[qty_key] -= 1
+                                if item in st.session_state.cart:
+                                    decrease_qty(item)
+                                    st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
+                            st.rerun()
+                        
+                        c4.markdown(f"<div style='text-align: center; padding: 5px; font-weight: bold;'>{st.session_state[qty_key]}</div>", unsafe_allow_html=True)
+                        
+                        if c5.button("➕", key=f"plus_{category}_{item}"):
+                            st.session_state[qty_key] += 1
+                            add_to_cart(item, price, 1)
+                            st.rerun()
 
     with cart_col:
         st.subheader("🧾 Current Order")
@@ -478,6 +516,7 @@ if page == "📋 Take Order":
                             st.session_state[key] = 0
                     st.rerun()
 
+    # Show bill
     if st.session_state.last_order:
         st.divider()
         st.subheader("🖨️ Bill / Receipt")
@@ -527,6 +566,7 @@ if page == "📋 Take Order":
                 st.rerun()
 
 elif page == "📊 Sales Report":
+    # [Same sales report code as before]
     st.subheader("📊 Daily Sales Report")
     
     st.session_state.daily_orders = load_orders_from_db()
@@ -681,184 +721,193 @@ elif page == "📊 Sales Report":
                     use_container_width=True
                 )
 
-elif page == "📦 Inventory":
-    st.subheader("📦 Inventory Management")
+elif page == "📦 Inventory Management":
+    st.subheader("📦 Inventory & Menu Management")
     
-    # Refresh inventory data
-    st.session_state.inventory = load_inventory()
-    
-    # Tabs for viewing and adding inventory
-    inv_tab1, inv_tab2 = st.tabs(["📋 View Inventory", "➕ Add Item"])
+    # Tabs for different inventory operations
+    inv_tab1, inv_tab2, inv_tab3 = st.tabs(["📋 Current Menu", "➕ Add New Product", "✏️ Edit Products"])
     
     with inv_tab1:
-        if not st.session_state.inventory:
-            st.info("No items in inventory. Add some items to get started!")
+        st.write("### Current Menu Items")
+        
+        all_items = get_all_menu_items()
+        
+        if not all_items:
+            st.info("No items in menu. Add some products!")
         else:
-            # Category filter
-            categories = list(set(item["category"] for item in st.session_state.inventory))
-            categories.sort()
-            selected_category = st.selectbox("Filter by Category", ["All Categories"] + categories)
+            # Group by category
+            categories = {}
+            for item in all_items:
+                category, item_name, price, active = item
+                if category not in categories:
+                    categories[category] = []
+                categories[category].append({
+                    "name": item_name,
+                    "price": price,
+                    "active": active
+                })
             
-            if selected_category == "All Categories":
-                filtered_inventory = st.session_state.inventory
-            else:
-                filtered_inventory = [item for item in st.session_state.inventory if item["category"] == selected_category]
-            
-            # Low stock alert
-            low_stock_items = [item for item in filtered_inventory if item["quantity"] <= item["min_stock"]]
-            if low_stock_items:
-                st.warning(f"⚠️ {len(low_stock_items)} item(s) are low on stock and need reordering!")
-            
-            # Display inventory as cards
-            for item in filtered_inventory:
-                stock_status = "🔴" if item["quantity"] <= item["min_stock"] else "🟢"
-                
-                with st.expander(f"{stock_status} {item['item_name']} - {item['quantity']} {item['unit']} ({item['category']})"):
-                    if st.session_state.editing_item == item['id']:
-                        # Edit mode
-                        st.markdown("**Edit Item**")
-                        edit_name = st.text_input("Item Name", value=item['item_name'], key=f"edit_name_{item['id']}")
-                        edit_category = st.text_input("Category", value=item['category'], key=f"edit_cat_{item['id']}")
-                        
-                        col_qty, col_unit = st.columns(2)
-                        with col_qty:
-                            edit_quantity = st.number_input("Quantity", value=float(item['quantity']), step=0.1, key=f"edit_qty_{item['id']}")
-                        with col_unit:
-                            edit_unit = st.text_input("Unit", value=item['unit'], key=f"edit_unit_{item['id']}")
-                        
-                        col_min, col_cost = st.columns(2)
-                        with col_min:
-                            edit_min_stock = st.number_input("Min Stock Level", value=float(item['min_stock']), step=0.1, key=f"edit_min_{item['id']}")
-                        with col_cost:
-                            edit_cost = st.number_input("Cost per Unit (Rs.)", value=float(item['cost_per_unit']), step=0.01, key=f"edit_cost_{item['id']}")
-                        
-                        edit_notes = st.text_area("Notes", value=item['notes'], key=f"edit_notes_{item['id']}")
-                        
-                        col_save, col_cancel = st.columns(2)
-                        with col_save:
-                            if st.button("💾 Save", key=f"save_{item['id']}", use_container_width=True):
-                                update_inventory_item(item['id'], edit_name, edit_category, edit_quantity, edit_unit, edit_min_stock, edit_cost, edit_notes)
-                                st.session_state.inventory = load_inventory()
-                                st.session_state.editing_item = None
-                                st.success("Item updated!")
-                                st.rerun()
-                        with col_cancel:
-                            if st.button("❌ Cancel", key=f"cancel_edit_{item['id']}", use_container_width=True):
-                                st.session_state.editing_item = None
-                                st.rerun()
-                    else:
-                        # View mode
-                        col_info, col_actions = st.columns([3, 1])
-                        
-                        with col_info:
-                            st.write(f"**Category:** {item['category']}")
-                            st.write(f"**Quantity:** {item['quantity']} {item['unit']}")
-                            st.write(f"**Min Stock Level:** {item['min_stock']} {item['unit']}")
-                            st.write(f"**Cost per Unit:** Rs. {item['cost_per_unit']:.2f}")
-                            st.write(f"**Total Value:** Rs. {item['quantity'] * item['cost_per_unit']:.2f}")
-                            st.write(f"**Last Updated:** {item['last_updated']}")
-                            if item['notes']:
-                                st.write(f"**Notes:** {item['notes']}")
-                        
-                        with col_actions:
-                            # Quick stock adjustment
-                            st.write("**Quick Adjust:**")
-                            col_add, col_sub = st.columns(2)
-                            with col_add:
-                                if st.button("➕", key=f"qadd_{item['id']}"):
-                                    new_qty = item['quantity'] + 1
-                                    update_inventory_quantity(item['id'], new_qty)
-                                    st.session_state.inventory = load_inventory()
-                                    st.rerun()
-                            with col_sub:
-                                if st.button("➖", key=f"qsub_{item['id']}"):
-                                    new_qty = max(0, item['quantity'] - 1)
-                                    update_inventory_quantity(item['id'], new_qty)
-                                    st.session_state.inventory = load_inventory()
-                                    st.rerun()
-                            
-                            st.divider()
-                            
-                            if st.button("✏️ Edit", key=f"edit_{item['id']}", use_container_width=True):
-                                st.session_state.editing_item = item['id']
-                                st.rerun()
-                            
-                            if st.session_state.inv_delete_confirm != item['id']:
-                                if st.button("🗑️ Delete", key=f"inv_del_{item['id']}", use_container_width=True):
-                                    st.session_state.inv_delete_confirm = item['id']
-                                    st.rerun()
-                            else:
-                                st.warning("Confirm?")
-                                col_y, col_n = st.columns(2)
-                                with col_y:
-                                    if st.button("✅", key=f"inv_confirm_{item['id']}", use_container_width=True):
-                                        delete_inventory_item(item['id'])
-                                        st.session_state.inventory = load_inventory()
-                                        st.session_state.inv_delete_confirm = None
-                                        st.success("Item deleted!")
-                                        st.rerun()
-                                with col_n:
-                                    if st.button("❌", key=f"inv_cancel_{item['id']}", use_container_width=True):
-                                        st.session_state.inv_delete_confirm = None
-                                        st.rerun()
-            
-            # Inventory summary
-            st.divider()
-            st.subheader("📊 Inventory Summary")
-            
-            total_items = len(filtered_inventory)
-            total_value = sum(item['quantity'] * item['cost_per_unit'] for item in filtered_inventory)
-            low_stock_count = len([item for item in filtered_inventory if item['quantity'] <= item['min_stock']])
-            
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Items", total_items)
-            col2.metric("Total Inventory Value", f"Rs. {total_value:,.2f}")
-            col3.metric("Low Stock Items", low_stock_count, delta=f"{low_stock_count}" if low_stock_count > 0 else "0")
-            
-            # Export inventory
-            if st.button("📥 Download Inventory (CSV)", use_container_width=True):
-                inv_data = []
-                for item in filtered_inventory:
-                    inv_data.append({
-                        "Item Name": item['item_name'],
-                        "Category": item['category'],
-                        "Quantity": item['quantity'],
-                        "Unit": item['unit'],
-                        "Min Stock": item['min_stock'],
-                        "Cost per Unit": item['cost_per_unit'],
-                        "Total Value": item['quantity'] * item['cost_per_unit'],
-                        "Status": "Low Stock" if item['quantity'] <= item['min_stock'] else "In Stock",
-                        "Last Updated": item['last_updated'],
-                        "Notes": item['notes']
-                    })
-                
-                df_inv = pd.DataFrame(inv_data)
-                csv_inv = df_inv.to_csv(index=False)
-                
-                st.download_button(
-                    "Click to Download",
-                    csv_inv,
-                    f"inventory_{get_pakistan_time().strftime('%Y%m%d')}.csv",
-                    "text/csv",
-                    key="download_inv_csv",
-                    use_container_width=True
-                )
+            for category, items in categories.items():
+                with st.expander(f"📁 {category} ({len(items)} items)", expanded=True):
+                    # Create table
+                    data = []
+                    for item in items:
+                        status = "✅ Active" if item["active"] else "❌ Inactive"
+                        data.append({
+                            "Item": item["name"],
+                            "Price (Rs.)": item["price"],
+                            "Status": status
+                        })
+                    
+                    df = pd.DataFrame(data)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
     
     with inv_tab2:
-        st.subheader("Add New Inventory Item")
+        st.write("### ➕ Add New Product")
         
-        with st.form("add_inventory_form"):
-            new_name = st.text_input("Item Name*", placeholder="e.g., Chicken Breast")
-            new_category = st.text_input("Category*", placeholder="e.g., Meat, Vegetables, Spices")
+        # Get existing categories
+        existing_categories = get_all_categories()
+        
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            # Option to select existing category or create new
+            category_option = st.radio(
+                "Category",
+                ["Select Existing", "Create New"],
+                horizontal=True
+            )
             
-            col_q, col_u = st.columns(2)
-            with col_q:
-                new_quantity = st.number_input("Initial Quantity*", min_value=0.0, step=0.1)
-            with col_u:
-                new_unit = st.selectbox("Unit*", ["kg", "g", "litre", "ml", "pieces", "packets", "dozen", "bottles", "cans"])
+            if category_option == "Select Existing":
+                if existing_categories:
+                    category = st.selectbox("Choose Category", existing_categories)
+                else:
+                    st.warning("No categories exist. Please create a new one.")
+                    category = st.text_input("New Category Name")
+            else:
+                category = st.text_input("New Category Name", placeholder="e.g., Beverages, Desserts")
+        
+        with col2:
+            item_name = st.text_input("Product Name", placeholder="e.g., Chicken Biryani")
+            price = st.number_input("Price (Rs.)", min_value=0, step=10, value=100)
+        
+        if st.button("➕ Add Product", use_container_width=True, type="primary"):
+            if not category or not item_name:
+                st.error("Please fill in all fields!")
+            elif price <= 0:
+                st.error("Price must be greater than 0!")
+            else:
+                success, message = add_menu_item(category, item_name, price)
+                if success:
+                    st.success(message)
+                    # Reload menu
+                    MENU = load_menu_from_db()
+                else:
+                    st.error(message)
+    
+    with inv_tab3:
+        st.write("### ✏️ Edit or Delete Products")
+        
+        all_items = get_all_menu_items()
+        
+        if not all_items:
+            st.info("No items to edit.")
+        else:
+            # Select item to edit
+            item_options = {}
+            for item in all_items:
+                category, item_name, price, active = item
+                key = f"{category} > {item_name}"
+                item_options[key] = {
+                    "category": category,
+                    "name": item_name,
+                    "price": price,
+                    "active": active
+                }
             
-            col_m, col_c = st.columns(2)
-            with col_m:
-                new_min_stock = st.number_input("Minimum Stock Level", min_value=0.0, step=0.1, value=1.0)
-            with col_c:
-                new_cost = st.number_input("Cost per Unit (Rs.)", min_value=0.0, step=0.
+            selected_item_key = st.selectbox(
+                "Select Product to Edit",
+                list(item_options.keys())
+            )
+            
+            if selected_item_key:
+                selected = item_options[selected_item_key]
+                
+                st.divider()
+                st.write(f"**Current Details:**")
+                st.write(f"- Category: **{selected['category']}**")
+                st.write(f"- Name: **{selected['name']}**")
+                st.write(f"- Price: **Rs. {selected['price']}**")
+                st.write(f"- Status: **{'Active' if selected['active'] else 'Inactive'}**")
+                
+                st.divider()
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    new_name = st.text_input("New Name", value=selected['name'])
+                    new_price = st.number_input("New Price (Rs.)", 
+                                               min_value=0, 
+                                               step=10, 
+                                               value=int(selected['price']))
+                
+                with col2:
+                    st.write("")  # Spacing
+                    st.write("")
+                    # Toggle active status
+                    new_status = st.checkbox("Active (visible in menu)", value=bool(selected['active']))
+                
+                col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
+                
+                with col_btn1:
+                    if st.button("💾 Update Product", use_container_width=True, type="primary"):
+                        if new_price <= 0:
+                            st.error("Price must be greater than 0!")
+                        else:
+                            success, message = update_menu_item(
+                                selected['category'],
+                                selected['name'],
+                                new_price,
+                                new_name if new_name != selected['name'] else None
+                            )
+                            if success:
+                                # Update active status if changed
+                                if new_status != selected['active']:
+                                    toggle_menu_item(selected['category'], new_name, 1 if new_status else 0)
+                                st.success(message)
+                                MENU = load_menu_from_db()
+                                st.rerun()
+                            else:
+                                st.error(message)
+                
+                with col_btn2:
+                    if new_status != selected['active']:
+                        action = "Activate" if new_status else "Deactivate"
+                        if st.button(f"🔄 {action}", use_container_width=True):
+                            toggle_menu_item(selected['category'], selected['name'], 1 if new_status else 0)
+                            st.success(f"Product {action.lower()}d successfully!")
+                            MENU = load_menu_from_db()
+                            st.rerun()
+                
+                with col_btn3:
+                    if st.button("🗑️ Delete Product", use_container_width=True, type="secondary"):
+                        # Confirmation
+                        if st.session_state.inventory_editing != selected_item_key:
+                            st.session_state.inventory_editing = selected_item_key
+                            st.rerun()
+                
+                # Delete confirmation
+                if st.session_state.inventory_editing == selected_item_key:
+                    st.warning(f"⚠️ Are you sure you want to delete '{selected['name']}'? This cannot be undone!")
+                    col_y, col_n = st.columns(2)
+                    with col_y:
+                        if st.button("✅ Yes, Delete", key=f"del_confirm_{selected_item_key}"):
+                            delete_menu_item(selected['category'], selected['name'])
+                            st.success(f"'{selected['name']}' deleted successfully!")
+                            st.session_state.inventory_editing = None
+                            MENU = load_menu_from_db()
+                            st.rerun()
+                    with col_n:
+                        if st.button("❌ Cancel", key=f"del_cancel_{selected_item_key}"):
+                            st.session_state.inventory_editing = None
+                            st.rerun()
