@@ -1,3 +1,4 @@
+
 """
 Affan's Kitchen - Restaurant Order / POS System
 ------------------------------------------------
@@ -43,7 +44,6 @@ DEFAULT_MENU = {
 
 RESTAURANT_NAME = "Affan's Kitchen"
 RESTAURANT_TAGLINE = "Tradition in Every Bite"
-BILLING_PASSWORD = "112233"  # Password for billing authorization
 
 # Pakistan timezone offset (UTC+5)
 PAKISTAN_OFFSET = timedelta(hours=5)
@@ -57,14 +57,13 @@ def init_db():
     conn = sqlite3.connect('orders.db')
     c = conn.cursor()
     
-    # Orders table - Added customer_name field
+    # Orders table
     c.execute('''
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             order_id INTEGER,
             date TEXT,
             time TEXT,
-            customer_name TEXT,
             items TEXT,
             subtotal REAL,
             tax_rate REAL,
@@ -97,12 +96,6 @@ def init_db():
                     INSERT INTO menu (category, item_name, price)
                     VALUES (?, ?, ?)
                 ''', (category, item_name, price))
-    
-    # Add customer_name column if it doesn't exist (for database upgrades)
-    try:
-        c.execute('ALTER TABLE orders ADD COLUMN customer_name TEXT')
-    except sqlite3.OperationalError:
-        pass  # Column already exists
     
     conn.commit()
     conn.close()
@@ -209,13 +202,12 @@ def save_order_to_db(order):
     conn = sqlite3.connect('orders.db')
     c = conn.cursor()
     c.execute('''
-        INSERT INTO orders (order_id, date, time, customer_name, items, subtotal, tax_rate, tax_amount, grand_total)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO orders (order_id, date, time, items, subtotal, tax_rate, tax_amount, grand_total)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         order["order_id"],
         order["date"],
         order["time"],
-        order["customer_name"],
         json.dumps(order["items"]),
         order["subtotal"],
         order["tax_rate"],
@@ -229,7 +221,7 @@ def load_orders_from_db():
     """Load all orders from SQLite database"""
     conn = sqlite3.connect('orders.db')
     c = conn.cursor()
-    c.execute('SELECT id, order_id, date, time, customer_name, items, subtotal, tax_rate, tax_amount, grand_total FROM orders ORDER BY id')
+    c.execute('SELECT id, order_id, date, time, items, subtotal, tax_rate, tax_amount, grand_total FROM orders ORDER BY id')
     rows = c.fetchall()
     conn.close()
     
@@ -240,12 +232,11 @@ def load_orders_from_db():
             "order_id": row[1],
             "date": row[2],
             "time": row[3],
-            "customer_name": row[4] if row[4] else "",
-            "items": json.loads(row[5]),
-            "subtotal": row[6],
-            "tax_rate": row[7],
-            "tax_amount": row[8],
-            "grand_total": row[9]
+            "items": json.loads(row[4]),
+            "subtotal": row[5],
+            "tax_rate": row[6],
+            "tax_amount": row[7],
+            "grand_total": row[8]
         })
     return orders
 
@@ -299,15 +290,6 @@ if "delete_all_confirm" not in st.session_state:
 if "inventory_editing" not in st.session_state:
     st.session_state.inventory_editing = None
 
-if "billing_authorized" not in st.session_state:
-    st.session_state.billing_authorized = False
-
-if "customer_name" not in st.session_state:
-    st.session_state.customer_name = ""
-
-if "show_billing_dialog" not in st.session_state:
-    st.session_state.show_billing_dialog = False
-
 
 def add_to_cart(item, price, qty=1):
     """Add item to cart with specified quantity"""
@@ -345,9 +327,6 @@ def clear_cart():
     st.session_state.cart = {}
     st.session_state.order_placed = False
     st.session_state.items_added = set()
-    st.session_state.billing_authorized = False
-    st.session_state.customer_name = ""
-    st.session_state.show_billing_dialog = False
 
 
 def save_order_to_history():
@@ -383,7 +362,6 @@ def save_order_to_history():
         "order_id": next_order_id,
         "date": order_date,
         "time": order_time.strftime("%I:%M %p"),
-        "customer_name": st.session_state.customer_name,
         "items": items,
         "subtotal": subtotal,
         "tax_rate": tax_rate,
@@ -394,8 +372,6 @@ def save_order_to_history():
     st.session_state.daily_orders = load_orders_from_db()
     save_order_to_db(order)
     st.session_state.last_order = order
-    st.session_state.billing_authorized = False
-    st.session_state.show_billing_dialog = False
 
 
 # App Header
@@ -513,13 +489,6 @@ if page == "📋 Take Order":
 
             st.divider()
             
-            # Customer Name Input
-            st.session_state.customer_name = st.text_input(
-                "👤 Customer Name",
-                value=st.session_state.customer_name,
-                placeholder="Enter customer name before billing..."
-            )
-            
             tax_rate = st.number_input("Tax / Service %", min_value=0, max_value=30, value=0, step=1)
             st.session_state["tax_rate"] = tax_rate
             tax_amount = round(total * tax_rate / 100)
@@ -531,14 +500,15 @@ if page == "📋 Take Order":
 
             col_a, col_b = st.columns(2)
             with col_a:
-                if st.button("🔐 Process Billing", use_container_width=True, type="primary"):
-                    # Check if customer name is provided
-                    if not st.session_state.customer_name.strip():
-                        st.error("⚠️ Please enter customer name before billing!")
-                    else:
-                        st.session_state.show_billing_dialog = True
-                        st.rerun()
-            
+                if st.button("✅ Place Order", use_container_width=True):
+                    save_order_to_history()
+                    st.session_state.order_placed = True
+                    st.success(f"✅ Order placed successfully! Grand Total: Rs. {grand_total}")
+                    clear_cart()
+                    for key in list(st.session_state.keys()):
+                        if key.startswith("qty_"):
+                            st.session_state[key] = 0
+                    st.rerun()
             with col_b:
                 if st.button("🗑️ Clear Order", use_container_width=True):
                     clear_cart()
@@ -546,41 +516,6 @@ if page == "📋 Take Order":
                         if key.startswith("qty_"):
                             st.session_state[key] = 0
                     st.rerun()
-            
-            # Billing Authorization Dialog
-            if st.session_state.show_billing_dialog:
-                st.divider()
-                st.warning("🔐 **Billing Authorization Required**")
-                st.info(f"👤 Customer: **{st.session_state.customer_name}**")
-                st.write(f"Total Amount: **Rs. {grand_total}**")
-                
-                password = st.text_input(
-                    "Enter Billing Password",
-                    type="password",
-                    placeholder="Enter password to authorize billing...",
-                    key="billing_password"
-                )
-                
-                col_pwd1, col_pwd2 = st.columns(2)
-                with col_pwd1:
-                    if st.button("✅ Authorize & Place Order", use_container_width=True, type="primary"):
-                        if password == BILLING_PASSWORD:
-                            save_order_to_history()
-                            st.session_state.order_placed = True
-                            st.success(f"✅ Order placed successfully for {st.session_state.customer_name}! Grand Total: Rs. {grand_total}")
-                            customer_name = st.session_state.customer_name
-                            clear_cart()
-                            for key in list(st.session_state.keys()):
-                                if key.startswith("qty_"):
-                                    st.session_state[key] = 0
-                            st.rerun()
-                        else:
-                            st.error("❌ Invalid password! Please try again.")
-                
-                with col_pwd2:
-                    if st.button("❌ Cancel Billing", use_container_width=True):
-                        st.session_state.show_billing_dialog = False
-                        st.rerun()
 
     # Show bill
     if st.session_state.last_order:
@@ -597,7 +532,6 @@ if page == "📋 Take Order":
         receipt_lines.append("=" * 40)
         receipt_lines.append(f"Date: {order_time_str} (PKT)")
         receipt_lines.append(f"Order #: {order['order_id']}")
-        receipt_lines.append(f"Customer: {order['customer_name']}")
         receipt_lines.append("-" * 40)
         receipt_lines.append(f"{'Item':<20}{'Qty':>6}{'Amt':>14}")
         receipt_lines.append("-" * 40)
@@ -633,6 +567,7 @@ if page == "📋 Take Order":
                 st.rerun()
 
 elif page == "📊 Sales Report":
+    # [Same sales report code as before]
     st.subheader("📊 Daily Sales Report")
     
     st.session_state.daily_orders = load_orders_from_db()
@@ -723,15 +658,12 @@ elif page == "📊 Sales Report":
             st.info("No orders found for the selected date.")
         else:
             for order in filtered_orders:
-                customer_display = f" - {order.get('customer_name', '')}" if order.get('customer_name') else ""
-                with st.expander(f"Order #{order['order_id']} - {order['date']} at {order['time']}{customer_display} - Rs. {order['grand_total']}"):
+                with st.expander(f"Order #{order['order_id']} - {order['date']} at {order['time']} - Rs. {order['grand_total']}"):
                     col_info, col_del = st.columns([4, 1])
                     
                     with col_info:
                         st.write(f"**Date:** {order['date']}")
                         st.write(f"**Time:** {order['time']} (PKT)")
-                        if order.get('customer_name'):
-                            st.write(f"**Customer:** {order['customer_name']}")
                         st.write(f"**Items:**")
                         for item in order["items"]:
                             st.write(f"  • {item['item']} x{item['qty']} = Rs. {item['total']}")
@@ -769,7 +701,6 @@ elif page == "📊 Sales Report":
                             "Order ID": order["order_id"],
                             "Date": order["date"],
                             "Time (PKT)": order["time"],
-                            "Customer": order.get("customer_name", ""),
                             "Product": item["item"],
                             "Quantity": item["qty"],
                             "Price (Rs.)": item["price"],
@@ -952,4 +883,36 @@ elif page == "📦 Inventory Management":
                 
                 with col_btn2:
                     if new_status != selected['active']:
-                        action = "Activate
+                        action = "Activate" if new_status else "Deactivate"
+                        if st.button(f"🔄 {action}", use_container_width=True):
+                            toggle_menu_item(selected['category'], selected['name'], 1 if new_status else 0)
+                            st.success(f"Product {action.lower()}d successfully!")
+                            MENU = load_menu_from_db()
+                            st.rerun()
+                
+                with col_btn3:
+                    if st.button("🗑️ Delete Product", use_container_width=True, type="secondary"):
+                        # Confirmation
+                        if st.session_state.inventory_editing != selected_item_key:
+                            st.session_state.inventory_editing = selected_item_key
+                            st.rerun()
+                
+                # Delete confirmation
+                if st.session_state.inventory_editing == selected_item_key:
+                    st.warning(f"⚠️ Are you sure you want to delete '{selected['name']}'? This cannot be undone!")
+                    col_y, col_n = st.columns(2)
+                    with col_y:
+                        if st.button("✅ Yes, Delete", key=f"del_confirm_{selected_item_key}"):
+                            delete_menu_item(selected['category'], selected['name'])
+                            st.success(f"'{selected['name']}' deleted successfully!")
+                            st.session_state.inventory_editing = None
+                            MENU = load_menu_from_db()
+                            st.rerun()
+                    with col_n:
+                        if st.button("❌ Cancel", key=f"del_cancel_{selected_item_key}"):
+                            st.session_state.inventory_editing = None
+                            st.rerun()
+
+
+
+
