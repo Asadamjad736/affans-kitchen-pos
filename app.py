@@ -123,6 +123,10 @@ if "cart" not in st.session_state:
 if "order_placed" not in st.session_state:
     st.session_state.order_placed = False
 
+# NEW: Store last order details for bill display
+if "last_order" not in st.session_state:
+    st.session_state.last_order = None
+
 # Load orders from database
 if "daily_orders" not in st.session_state:
     st.session_state.daily_orders = load_orders_from_db()
@@ -215,6 +219,9 @@ def save_order_to_history():
     
     # Save to database
     save_order_to_db(order)
+    
+    # NEW: Store this order for bill display
+    st.session_state.last_order = order
 
 
 # App Header
@@ -352,43 +359,50 @@ if page == "📋 Take Order":
                     save_order_to_history()
                     st.session_state.order_placed = True
                     st.success(f"✅ Order placed successfully! Grand Total: Rs. {grand_total}")
-                    # Clear cart after placing order
+                    # Clear cart after placing order (but keep last_order for bill display)
                     clear_cart()
+                    # Reset menu quantities
+                    for key in list(st.session_state.keys()):
+                        if key.startswith("qty_"):
+                            st.session_state[key] = 0
                     st.rerun()
             with col_b:
                 if st.button("🗑️ Clear Order", use_container_width=True):
                     clear_cart()
+                    # Reset menu quantities
+                    for key in list(st.session_state.keys()):
+                        if key.startswith("qty_"):
+                            st.session_state[key] = 0
                     st.rerun()
 
-    if st.session_state.order_placed and st.session_state.cart:
+    # FIXED: Show bill using last_order instead of current cart
+    if st.session_state.last_order:
         st.divider()
         st.subheader("🖨️ Bill / Receipt")
-
-        order_time = get_pakistan_time().strftime("%d-%m-%Y %I:%M %p")
-        total = sum(d["qty"] * d["price"] for d in st.session_state.cart.values())
-        tax_rate = st.session_state.get("tax_rate", 0)
-        tax_amount = round(total * tax_rate / 100)
-        grand_total = total + tax_amount
-
+        
+        order = st.session_state.last_order
+        order_time_str = f"{order['date']} {order['time']}"
+        
         receipt_lines = []
         receipt_lines.append("=" * 40)
         receipt_lines.append(RESTAURANT_NAME.center(40))
         receipt_lines.append(RESTAURANT_TAGLINE.center(40))
         receipt_lines.append("=" * 40)
-        receipt_lines.append(f"Date: {order_time} (PKT)")
+        receipt_lines.append(f"Date: {order_time_str} (PKT)")
+        receipt_lines.append(f"Order #: {order['order_id']}")
         receipt_lines.append("-" * 40)
         receipt_lines.append(f"{'Item':<20}{'Qty':>6}{'Amt':>14}")
         receipt_lines.append("-" * 40)
-        for item, data in st.session_state.cart.items():
-            qty = data["qty"]
-            price = data["price"]
-            line_total = qty * price
-            receipt_lines.append(f"{item[:20]:<20}{qty:>6}{line_total:>14}")
+        for item in order["items"]:
+            name = item["item"]
+            qty = item["qty"]
+            line_total = item["total"]
+            receipt_lines.append(f"{name[:20]:<20}{qty:>6}{line_total:>14}")
         receipt_lines.append("-" * 40)
-        receipt_lines.append(f"{'Subtotal':<26}{total:>14}")
-        receipt_lines.append(f"{'Tax/Service':<26}{tax_amount:>14}")
+        receipt_lines.append(f"{'Subtotal':<26}{order['subtotal']:>14}")
+        receipt_lines.append(f"{'Tax/Service':<26}{order['tax_amount']:>14}")
         receipt_lines.append("-" * 40)
-        receipt_lines.append(f"{'TOTAL':<26}{grand_total:>14}")
+        receipt_lines.append(f"{'TOTAL':<26}{order['grand_total']:>14}")
         receipt_lines.append("=" * 40)
         receipt_lines.append("Thank you for your order!".center(40))
         receipt_lines.append("=" * 40)
@@ -397,13 +411,19 @@ if page == "📋 Take Order":
 
         st.code(receipt_text, language=None)
 
-        st.download_button(
-            "⬇️ Download Receipt (.txt)",
-            data=receipt_text,
-            file_name=f"receipt_{get_pakistan_time().strftime('%Y%m%d_%H%M%S')}.txt",
-            mime="text/plain",
-            use_container_width=True
-        )
+        col_bill1, col_bill2 = st.columns(2)
+        with col_bill1:
+            st.download_button(
+                "⬇️ Download Receipt (.txt)",
+                data=receipt_text,
+                file_name=f"receipt_{order['order_id']}_{order['date'].replace('-', '')}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
+        with col_bill2:
+            if st.button("📋 New Order", use_container_width=True):
+                st.session_state.last_order = None
+                st.rerun()
 
 elif page == "📊 Sales Report":
     st.subheader("📊 Daily Sales Report")
