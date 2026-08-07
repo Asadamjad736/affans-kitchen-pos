@@ -10,7 +10,6 @@ from datetime import datetime, date, timedelta
 import json
 import pandas as pd
 import plotly.express as px
-import os
 from pathlib import Path
 
 st.set_page_config(
@@ -23,7 +22,7 @@ st.set_page_config(
 # Constants
 RESTAURANT_NAME = "Affan's Kitchen"
 RESTAURANT_TAGLINE = "Tradition in Every Bite"
-TAX_RATE = 5  # Default tax rate
+TAX_RATE = 5
 
 # Menu Configuration
 MENU = {
@@ -53,15 +52,13 @@ MENU = {
     },
 }
 
-# Data persistence functions
+# Data persistence
 def get_data_dir():
-    """Create and return data directory path"""
     data_dir = Path("data")
     data_dir.mkdir(exist_ok=True)
     return data_dir
 
 def load_json(filename):
-    """Load data from JSON file"""
     data_dir = get_data_dir()
     file_path = data_dir / filename
     if file_path.exists():
@@ -73,13 +70,12 @@ def load_json(filename):
     return {}
 
 def save_json(filename, data):
-    """Save data to JSON file"""
     data_dir = get_data_dir()
     file_path = data_dir / filename
     with open(file_path, 'w') as f:
         json.dump(data, f, indent=2)
 
-# Initialize session state with persistence
+# Initialize session state
 def init_session_state():
     defaults = {
         "cart": {},
@@ -93,13 +89,13 @@ def init_session_state():
         "customer_name": "",
         "customer_phone": "",
         "order_type": "Dine In",
-        "data_loaded": False,
+        "quantities": {},  # Store all quantities in one dict
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
     
-    # Initialize inventory if empty
+    # Initialize inventory
     if not st.session_state.inventory:
         for category, items in MENU.items():
             for item in items:
@@ -110,7 +106,14 @@ def init_session_state():
                 }
         save_json("inventory.json", st.session_state.inventory)
     
-    # Set current order number from history
+    # Initialize quantities for all menu items
+    for category, items in MENU.items():
+        for item in items:
+            qty_key = f"{category}_{item}"
+            if qty_key not in st.session_state.quantities:
+                st.session_state.quantities[qty_key] = 0
+    
+    # Set current order number
     if st.session_state.order_history:
         max_order = 0
         for order in st.session_state.order_history:
@@ -121,8 +124,6 @@ def init_session_state():
             except:
                 pass
         st.session_state.current_order_number = max_order + 1
-    
-    st.session_state.data_loaded = True
 
 init_session_state()
 
@@ -130,7 +131,6 @@ init_session_state()
 def add_to_cart(item, price, qty=1):
     if qty <= 0:
         return False
-    # Check inventory
     if st.session_state.inventory[item]["stock"] < qty:
         st.error(f"Insufficient stock for {item}. Available: {st.session_state.inventory[item]['stock']}")
         return False
@@ -140,7 +140,6 @@ def add_to_cart(item, price, qty=1):
     else:
         st.session_state.cart[item] = {"qty": qty, "price": price}
     
-    # Update inventory
     st.session_state.inventory[item]["stock"] -= qty
     save_json("inventory.json", st.session_state.inventory)
     st.session_state.order_placed = False
@@ -148,7 +147,6 @@ def add_to_cart(item, price, qty=1):
 
 def remove_from_cart(item):
     if item in st.session_state.cart:
-        # Return to inventory
         qty = st.session_state.cart[item]["qty"]
         st.session_state.inventory[item]["stock"] += qty
         save_json("inventory.json", st.session_state.inventory)
@@ -156,16 +154,14 @@ def remove_from_cart(item):
     st.session_state.order_placed = False
 
 def clear_cart():
-    # Return all items to inventory
     for item, data in st.session_state.cart.items():
         st.session_state.inventory[item]["stock"] += data["qty"]
     save_json("inventory.json", st.session_state.inventory)
     st.session_state.cart = {}
     st.session_state.order_placed = False
-    # Clear quantity inputs
-    for key in list(st.session_state.keys()):
-        if key.startswith("qty_"):
-            del st.session_state[key]
+    # Reset all quantities
+    for key in st.session_state.quantities:
+        st.session_state.quantities[key] = 0
 
 def generate_receipt():
     order_time = datetime.now().strftime("%d-%m-%Y %I:%M %p")
@@ -224,7 +220,6 @@ def save_order_to_history(receipt_text, order_number, order_time, grand_total):
     save_json("orders.json", st.session_state.order_history)
     st.session_state.current_order_number += 1
     
-    # Update daily sales
     today = date.today().isoformat()
     if today not in st.session_state.daily_sales:
         st.session_state.daily_sales[today] = {
@@ -239,7 +234,6 @@ def save_order_to_history(receipt_text, order_number, order_time, grand_total):
     daily["total_sales"] += grand_total
     daily["total_items"] += sum(d["qty"] for d in st.session_state.cart.values())
     
-    # Update category sales
     for item, data in st.session_state.cart.items():
         category = next((cat for cat, items in MENU.items() if item in items), "Other")
         if category not in daily["categories"]:
@@ -249,7 +243,8 @@ def save_order_to_history(receipt_text, order_number, order_time, grand_total):
     
     save_json("daily_sales.json", st.session_state.daily_sales)
 
-# UI Layout
+# ============ UI ============
+
 # Header
 st.title(f"🍲 {RESTAURANT_NAME}")
 st.caption(RESTAURANT_TAGLINE)
@@ -275,31 +270,34 @@ st.divider()
 # Main Layout
 menu_col, cart_col, analytics_col = st.tabs(["📋 Menu & Order", "🧾 Cart & Checkout", "📊 Analytics"])
 
+# ============ MENU TAB ============
 with menu_col:
-    col1, col2 = st.columns([2, 1])
+    st.subheader("📋 Menu")
     
-    with col1:
-        st.subheader("📋 Menu")
-        
-        # Customer Info
-        with st.expander("👤 Customer Details", expanded=False):
-            col_a, col_b, col_c = st.columns(3)
-            with col_a:
-                st.session_state.customer_name = st.text_input("Customer Name", value=st.session_state.customer_name)
-            with col_b:
-                st.session_state.customer_phone = st.text_input("Phone", value=st.session_state.customer_phone)
-            with col_c:
-                st.session_state.order_type = st.selectbox("Order Type", ["Dine In", "Takeaway", "Delivery"])
-        
-        # Menu Tabs - SIMPLIFIED VERSION WITHOUT CALLBACK ISSUES
-        tabs = st.tabs(list(MENU.keys()))
-        for tab, category in zip(tabs, MENU.keys()):
-            with tab:
+    # Customer Info
+    with st.expander("👤 Customer Details", expanded=False):
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            st.session_state.customer_name = st.text_input("Customer Name", value=st.session_state.customer_name)
+        with col_b:
+            st.session_state.customer_phone = st.text_input("Phone", value=st.session_state.customer_phone)
+        with col_c:
+            st.session_state.order_type = st.selectbox("Order Type", ["Dine In", "Takeaway", "Delivery"])
+    
+    # Menu Display - USING FORMS TO AVOID SESSION STATE ISSUES
+    tabs = st.tabs(list(MENU.keys()))
+    
+    for tab, category in zip(tabs, MENU.keys()):
+        with tab:
+            # Use a form for each category to batch updates
+            with st.form(key=f"form_{category}"):
+                st.write(f"**{category} Items**")
+                
+                # Display each item in the category
                 for item, price in MENU[category].items():
                     col_item, col_price, col_qty = st.columns([3, 1, 2])
                     
                     with col_item:
-                        # Show stock status
                         stock = st.session_state.inventory[item]["stock"]
                         stock_emoji = "🟢" if stock > 10 else "🟡" if stock > 5 else "🔴"
                         st.write(f"**{item}** {stock_emoji}")
@@ -308,47 +306,39 @@ with menu_col:
                         st.write(f"Rs. {price}")
                     
                     with col_qty:
-                        qty_key = f"qty_{category}_{item}"
+                        qty_key = f"{category}_{item}"
+                        # Use the quantity from session state
+                        st.number_input(
+                            "Qty", 
+                            key=qty_key, 
+                            min_value=0, 
+                            max_value=st.session_state.inventory[item]["stock"],
+                            step=1,
+                            label_visibility="collapsed"
+                        )
+                
+                # Submit button for this category
+                submitted = st.form_submit_button(f"🛒 Add {category} Items to Cart")
+                
+                if submitted:
+                    added_count = 0
+                    for item, price in MENU[category].items():
+                        qty_key = f"{category}_{item}"
+                        qty = st.session_state[qty_key]
                         
-                        # Initialize qty_key if it doesn't exist
-                        if qty_key not in st.session_state:
-                            st.session_state[qty_key] = 0
-                        
-                        # Use a container for the quantity controls
-                        qty_container = st.container()
-                        with qty_container:
-                            # Three columns for - | number | +
-                            c1, c2, c3 = st.columns([1, 2, 1])
-                            
-                            # Minus button
-                            if c1.button("−", key=f"minus_{qty_key}", 
-                                       disabled=st.session_state[qty_key] == 0,
-                                       use_container_width=True):
-                                if st.session_state[qty_key] > 0:
-                                    st.session_state[qty_key] -= 1
-                                    if st.session_state[qty_key] == 0:
-                                        remove_from_cart(item)
-                                    else:
-                                        if item in st.session_state.cart:
-                                            st.session_state.cart[item]["qty"] = st.session_state[qty_key]
-                                    st.rerun()
-                            
-                            # Number input
-                            c2.number_input("", key=qty_key, 
-                                          min_value=0, 
-                                          max_value=st.session_state.inventory[item]["stock"], 
-                                          step=1, 
-                                          label_visibility="collapsed")
-                            
-                            # Plus button
-                            if c3.button("+", key=f"plus_{qty_key}", 
-                                       disabled=st.session_state[qty_key] >= st.session_state.inventory[item]["stock"],
-                                       use_container_width=True):
-                                if st.session_state[qty_key] < st.session_state.inventory[item]["stock"]:
-                                    st.session_state[qty_key] += 1
-                                    add_to_cart(item, price, 1)
-                                    st.rerun()
+                        if qty > 0:
+                            if add_to_cart(item, price, qty):
+                                added_count += 1
+                                # Reset quantity after adding
+                                st.session_state[qty_key] = 0
+                    
+                    if added_count > 0:
+                        st.success(f"✅ Added {added_count} item(s) to cart!")
+                        st.rerun()
+                    else:
+                        st.info("No items selected. Set quantity > 0.")
 
+# ============ CART TAB ============
 with cart_col:
     st.subheader("🧾 Current Order")
     
@@ -399,16 +389,14 @@ with cart_col:
         with col1:
             if st.button("✅ Place Order", use_container_width=True):
                 if st.session_state.cart:
-                    st.session_state.order_placed = True
                     receipt_text, order_number, order_time, grand_total = generate_receipt()
                     save_order_to_history(receipt_text, order_number, order_time, grand_total)
                     st.success(f"Order {order_number} placed successfully!")
                     st.balloons()
-                    # Clear cart after order
+                    # Clear cart
                     st.session_state.cart = {}
-                    for key in list(st.session_state.keys()):
-                        if key.startswith("qty_"):
-                            del st.session_state[key]
+                    for key in st.session_state.quantities:
+                        st.session_state.quantities[key] = 0
                     st.rerun()
                 else:
                     st.warning("Cart is empty!")
@@ -420,8 +408,7 @@ with cart_col:
         
         with col3:
             if st.button("📝 Quick Order", use_container_width=True):
-                sample_items = list(st.session_state.cart.keys())
-                if not sample_items:
+                if not st.session_state.cart:
                     for category, items in MENU.items():
                         for item, price in list(items.items())[:2]:
                             add_to_cart(item, price, 1)
@@ -436,10 +423,10 @@ with cart_col:
         else:
             st.info("No orders yet")
 
+# ============ ANALYTICS TAB ============
 with analytics_col:
     st.subheader("📊 Daily Analytics")
     
-    # Date selector
     col1, col2 = st.columns(2)
     with col1:
         view_date = st.date_input("Select Date", date.today())
@@ -452,7 +439,6 @@ with analytics_col:
     if date_str in st.session_state.daily_sales:
         daily = st.session_state.daily_sales[date_str]
         
-        # Key Metrics
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Total Sales", f"Rs. {daily['total_sales']:,}")
@@ -466,7 +452,6 @@ with analytics_col:
         
         st.divider()
         
-        # Category Breakdown
         if daily['categories']:
             st.subheader("Category Performance")
             cat_data = []
@@ -487,7 +472,6 @@ with analytics_col:
                 fig = px.pie(df, values='Revenue', names='Category', title='Revenue by Category')
                 st.plotly_chart(fig, use_container_width=True)
         
-        # Recent Orders
         with st.expander("📋 Daily Orders Detail", expanded=False):
             for order_num in daily['orders']:
                 for order in st.session_state.order_history:
@@ -497,7 +481,6 @@ with analytics_col:
     else:
         st.info(f"No sales data available for {view_date.strftime('%B %d, %Y')}")
     
-    # Overall Statistics
     with st.expander("📈 Overall Statistics", expanded=False):
         if st.session_state.order_history:
             total_sales = sum(order['total'] for order in st.session_state.order_history)
@@ -512,7 +495,6 @@ with analytics_col:
             with col3:
                 st.metric("Total Items Sold", total_items)
             
-            # Export options
             if st.button("📥 Export Data (CSV)"):
                 data = []
                 for order in st.session_state.order_history:
@@ -531,6 +513,54 @@ with analytics_col:
                     file_name=f"sales_data_{datetime.now().strftime('%Y%m%d')}.csv",
                     mime="text/csv",
                 )
+
+# ============ RECEIPT DISPLAY ============
+if st.session_state.order_placed and st.session_state.cart:
+    st.divider()
+    st.subheader("🖨️ Receipt")
+    
+    receipt_text, order_number, order_time, grand_total = generate_receipt()
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.code(receipt_text, language=None)
+        
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            st.download_button(
+                "⬇️ Download",
+                data=receipt_text,
+                file_name=f"receipt_{order_number}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
+        with col_b:
+            print_html = f'''
+            <div id="receipt-print" style="display:none;">
+                <pre style="font-family: monospace; white-space: pre;">{receipt_text}</pre>
+            </div>
+            <button onclick="printReceipt()" style="padding:10px 20px; font-size:16px; cursor:pointer; background:#4CAF50; color:white; border:none; border-radius:5px; width:100%;">
+                🖨️ Print
+            </button>
+            <script>
+            function printReceipt() {{
+                var content = document.getElementById('receipt-print').innerHTML;
+                var printWindow = window.open('', '', 'width=400,height=650');
+                printWindow.document.write('<div style="font-size:14px;">' + content + '</div>');
+                printWindow.document.close();
+                printWindow.print();
+            }}
+            </script>
+            '''
+            st.components.v1.html(print_html, height=70)
+        with col_c:
+            if st.button("✅ New Order", use_container_width=True):
+                clear_cart()
+                st.session_state.order_placed = False
+                st.rerun()
+
+if st.session_state.order_placed and not st.session_state.cart:
+    st.session_state.order_placed = False
 
 # Footer
 st.divider()
