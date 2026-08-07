@@ -95,23 +95,40 @@ def load_orders_from_db():
     """Load all orders from SQLite database"""
     conn = sqlite3.connect('orders.db')
     c = conn.cursor()
-    c.execute('SELECT order_id, date, time, items, subtotal, tax_rate, tax_amount, grand_total FROM orders ORDER BY id')
+    c.execute('SELECT id, order_id, date, time, items, subtotal, tax_rate, tax_amount, grand_total FROM orders ORDER BY id')
     rows = c.fetchall()
     conn.close()
     
     orders = []
     for row in rows:
         orders.append({
-            "order_id": row[0],
-            "date": row[1],
-            "time": row[2],
-            "items": json.loads(row[3]),  # Parse JSON back to list
-            "subtotal": row[4],
-            "tax_rate": row[5],
-            "tax_amount": row[6],
-            "grand_total": row[7]
+            "db_id": row[0],  # Database ID for deletion
+            "order_id": row[1],
+            "date": row[2],
+            "time": row[3],
+            "items": json.loads(row[4]),  # Parse JSON back to list
+            "subtotal": row[5],
+            "tax_rate": row[6],
+            "tax_amount": row[7],
+            "grand_total": row[8]
         })
     return orders
+
+def delete_order_from_db(db_id):
+    """Delete a specific order from database by its ID"""
+    conn = sqlite3.connect('orders.db')
+    c = conn.cursor()
+    c.execute('DELETE FROM orders WHERE id = ?', (db_id,))
+    conn.commit()
+    conn.close()
+
+def delete_all_orders_from_db():
+    """Delete all orders from database"""
+    conn = sqlite3.connect('orders.db')
+    c = conn.cursor()
+    c.execute('DELETE FROM orders')
+    conn.commit()
+    conn.close()
 
 # Initialize database
 init_db()
@@ -123,7 +140,7 @@ if "cart" not in st.session_state:
 if "order_placed" not in st.session_state:
     st.session_state.order_placed = False
 
-# NEW: Store last order details for bill display
+# Store last order details for bill display
 if "last_order" not in st.session_state:
     st.session_state.last_order = None
 
@@ -137,6 +154,13 @@ if "menu_qty" not in st.session_state:
 
 if "items_added" not in st.session_state:
     st.session_state.items_added = set()
+
+# Delete confirmation states
+if "delete_confirm" not in st.session_state:
+    st.session_state.delete_confirm = None
+
+if "delete_all_confirm" not in st.session_state:
+    st.session_state.delete_all_confirm = False
 
 
 def add_to_cart(item, price, qty=1):
@@ -203,8 +227,12 @@ def save_order_to_history():
     tax_amount = round(subtotal * tax_rate / 100)
     grand_total = subtotal + tax_amount
     
+    # Get next order ID
+    existing_orders = load_orders_from_db()
+    next_order_id = 1 if not existing_orders else max(o["order_id"] for o in existing_orders) + 1
+    
     order = {
-        "order_id": len(st.session_state.daily_orders) + 1,
+        "order_id": next_order_id,
         "date": order_date,
         "time": order_time.strftime("%I:%M %p"),
         "items": items,
@@ -215,12 +243,12 @@ def save_order_to_history():
     }
     
     # Save to session state
-    st.session_state.daily_orders.append(order)
+    st.session_state.daily_orders = load_orders_from_db()
     
     # Save to database
     save_order_to_db(order)
     
-    # NEW: Store this order for bill display
+    # Store this order for bill display
     st.session_state.last_order = order
 
 
@@ -284,19 +312,18 @@ if page == "📋 Take Order":
                     if c3.button("➖", key=f"minus_{category}_{item}"):
                         if st.session_state[qty_key] > 0:
                             st.session_state[qty_key] -= 1
-                            # Remove from cart if quantity is 0
-                            if st.session_state[qty_key] == 0:
-                                if item in st.session_state.cart:
-                                    del st.session_state.cart[item]
+                            # Update cart
+                            if item in st.session_state.cart:
+                                decrease_qty(item)
+                                st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
                         st.rerun()
                     
                     # Quantity display
                     c4.markdown(f"<div style='text-align: center; padding: 5px; font-weight: bold;'>{st.session_state[qty_key]}</div>", unsafe_allow_html=True)
                     
-                    # Plus button - AUTOMATICALLY ADD TO CART
+                    # Plus button
                     if c5.button("➕", key=f"plus_{category}_{item}"):
                         st.session_state[qty_key] += 1
-                        # Automatically add to cart
                         add_to_cart(item, price, 1)
                         st.rerun()
 
@@ -359,7 +386,7 @@ if page == "📋 Take Order":
                     save_order_to_history()
                     st.session_state.order_placed = True
                     st.success(f"✅ Order placed successfully! Grand Total: Rs. {grand_total}")
-                    # Clear cart after placing order (but keep last_order for bill display)
+                    # Clear cart after placing order
                     clear_cart()
                     # Reset menu quantities
                     for key in list(st.session_state.keys()):
@@ -375,7 +402,7 @@ if page == "📋 Take Order":
                             st.session_state[key] = 0
                     st.rerun()
 
-    # FIXED: Show bill using last_order instead of current cart
+    # Show bill using last_order
     if st.session_state.last_order:
         st.divider()
         st.subheader("🖨️ Bill / Receipt")
@@ -438,7 +465,29 @@ elif page == "📊 Sales Report":
         dates = list(set(order["date"] for order in st.session_state.daily_orders))
         dates.sort(reverse=True)
         
-        selected_date = st.selectbox("Select Date", ["All Dates"] + dates)
+        col_date, col_delete = st.columns([3, 1])
+        with col_date:
+            selected_date = st.selectbox("Select Date", ["All Dates"] + dates)
+        with col_delete:
+            # Delete All button with confirmation
+            if not st.session_state.delete_all_confirm:
+                if st.button("🗑️ Delete All Orders", use_container_width=True, type="secondary"):
+                    st.session_state.delete_all_confirm = True
+                    st.rerun()
+            else:
+                st.warning("⚠️ Are you sure? This cannot be undone!")
+                col_yes, col_no = st.columns(2)
+                with col_yes:
+                    if st.button("✅ Yes, Delete All", use_container_width=True, type="primary"):
+                        delete_all_orders_from_db()
+                        st.session_state.daily_orders = []
+                        st.session_state.delete_all_confirm = False
+                        st.success("All orders deleted successfully!")
+                        st.rerun()
+                with col_no:
+                    if st.button("❌ Cancel", use_container_width=True):
+                        st.session_state.delete_all_confirm = False
+                        st.rerun()
         
         if selected_date == "All Dates":
             filtered_orders = st.session_state.daily_orders
@@ -494,47 +543,75 @@ elif page == "📊 Sales Report":
         
         st.divider()
         
-        # Order history
+        # Order history with delete functionality
         st.subheader("📝 Order History")
         
-        for order in filtered_orders:
-            with st.expander(f"Order #{order['order_id']} - {order['date']} at {order['time']} - Rs. {order['grand_total']}"):
-                st.write(f"**Date:** {order['date']}")
-                st.write(f"**Time:** {order['time']} (PKT)")
-                st.write(f"**Items:**")
-                for item in order["items"]:
-                    st.write(f"  • {item['item']} x{item['qty']} = Rs. {item['total']}")
-                st.write(f"**Subtotal:** Rs. {order['subtotal']}")
-                st.write(f"**Tax ({order['tax_rate']}%):** Rs. {order['tax_amount']}")
-                st.write(f"**Grand Total:** Rs. {order['grand_total']}")
+        if not filtered_orders:
+            st.info("No orders found for the selected date.")
+        else:
+            for order in filtered_orders:
+                with st.expander(f"Order #{order['order_id']} - {order['date']} at {order['time']} - Rs. {order['grand_total']}"):
+                    col_info, col_del = st.columns([4, 1])
+                    
+                    with col_info:
+                        st.write(f"**Date:** {order['date']}")
+                        st.write(f"**Time:** {order['time']} (PKT)")
+                        st.write(f"**Items:**")
+                        for item in order["items"]:
+                            st.write(f"  • {item['item']} x{item['qty']} = Rs. {item['total']}")
+                        st.write(f"**Subtotal:** Rs. {order['subtotal']}")
+                        st.write(f"**Tax ({order['tax_rate']}%):** Rs. {order['tax_amount']}")
+                        st.write(f"**Grand Total:** Rs. {order['grand_total']}")
+                    
+                    with col_del:
+                        # Delete confirmation for individual order
+                        if st.session_state.delete_confirm != order['db_id']:
+                            if st.button("🗑️ Delete", key=f"delete_{order['db_id']}", use_container_width=True):
+                                st.session_state.delete_confirm = order['db_id']
+                                st.rerun()
+                        else:
+                            st.warning("⚠️ Confirm delete?")
+                            col_y, col_n = st.columns(2)
+                            with col_y:
+                                if st.button("✅", key=f"confirm_{order['db_id']}", use_container_width=True):
+                                    delete_order_from_db(order['db_id'])
+                                    st.session_state.daily_orders = load_orders_from_db()
+                                    st.session_state.delete_confirm = None
+                                    st.success(f"Order #{order['order_id']} deleted!")
+                                    st.rerun()
+                            with col_n:
+                                if st.button("❌", key=f"cancel_{order['db_id']}", use_container_width=True):
+                                    st.session_state.delete_confirm = None
+                                    st.rerun()
         
         # Export option
         st.divider()
-        if st.button("📥 Download Sales Report (CSV)", use_container_width=True):
-            all_orders_data = []
-            for order in filtered_orders:
-                for item in order["items"]:
-                    all_orders_data.append({
-                        "Order ID": order["order_id"],
-                        "Date": order["date"],
-                        "Time (PKT)": order["time"],
-                        "Product": item["item"],
-                        "Quantity": item["qty"],
-                        "Price (Rs.)": item["price"],
-                        "Line Total (Rs.)": item["total"],
-                        "Tax Rate (%)": order["tax_rate"],
-                        "Tax Amount (Rs.)": order["tax_amount"],
-                        "Grand Total (Rs.)": order["grand_total"]
-                    })
-            
-            df_export = pd.DataFrame(all_orders_data)
-            csv = df_export.to_csv(index=False)
-            
-            st.download_button(
-                "Click to Download CSV",
-                csv,
-                f"sales_report_{selected_date.replace('-', '')}.csv",
-                "text/csv",
-                key="download_csv",
-                use_container_width=True
-            )
+        if filtered_orders:
+            if st.button("📥 Download Sales Report (CSV)", use_container_width=True):
+                all_orders_data = []
+                for order in filtered_orders:
+                    for item in order["items"]:
+                        all_orders_data.append({
+                            "Order ID": order["order_id"],
+                            "Date": order["date"],
+                            "Time (PKT)": order["time"],
+                            "Product": item["item"],
+                            "Quantity": item["qty"],
+                            "Price (Rs.)": item["price"],
+                            "Line Total (Rs.)": item["total"],
+                            "Tax Rate (%)": order["tax_rate"],
+                            "Tax Amount (Rs.)": order["tax_amount"],
+                            "Grand Total (Rs.)": order["grand_total"]
+                        })
+                
+                df_export = pd.DataFrame(all_orders_data)
+                csv = df_export.to_csv(index=False)
+                
+                st.download_button(
+                    "Click to Download CSV",
+                    csv,
+                    f"sales_report_{selected_date.replace('-', '')}.csv",
+                    "text/csv",
+                    key="download_csv",
+                    use_container_width=True
+                )
