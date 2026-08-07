@@ -360,16 +360,33 @@ with right:
 
         col1, col2 = st.columns(2)
 
-        with col1:
+with col1:
 
-            if st.button(
-                "🧹 Clear Cart",
-                use_container_width=True
-            ):
+    if st.button(
+        "🧹 Clear Cart",
+        use_container_width=True
+    ):
+        st.session_state.cart = []
+        st.rerun()
 
-                st.session_state.cart = []
+with col2:
 
-                st.rerun()
+    if st.button(
+        "✅ Checkout",
+        use_container_width=True
+    ):
+
+        st.session_state.current_total = total
+
+        st.session_state.current_datetime = datetime.now().strftime(
+            "%d-%b-%Y %I:%M:%S %p"
+        )
+
+        st.success(
+            f"Order #{st.session_state.order_no} Ready"
+        )
+
+        st.rerun()
 
         with col2:
 
