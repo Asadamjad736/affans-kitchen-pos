@@ -350,18 +350,22 @@ with right:
 
         with col2:
 
-            if st.button(
-                "✅ Checkout",
-                use_container_width=True
-            ):
+           if st.button(
+    "✅ Checkout",
+    use_container_width=True
+):
 
-                st.session_state.order_number += 1
+    save_order()
 
-                st.success(
-                    f"Order #{st.session_state.order_number} created successfully!"
-                )
+    st.session_state.order_number += 1
 
-                st.balloons()
+    st.success("Order Saved!")
+
+    st.balloons()
+
+    st.session_state.cart = []
+
+    st.rerun()
                 # ===========================================
 # RECEIPT PREVIEW
 # ===========================================
