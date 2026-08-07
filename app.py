@@ -5,6 +5,54 @@ st.set_page_config(
     page_title="Affans Kitchen - POS", page_icon="🍔", layout="wide"
 )
 
+# --- LOGIN CONFIGURATION ---
+# Set your desired passcode here
+POS_PASSCODE = "1234"
+
+
+def check_password():
+  """Returns True if the user entered the correct password."""
+
+  def password_entered():
+    if st.session_state["password"] == POS_PASSCODE:
+      st.session_state["password_correct"] = True
+      del st.session_state["password"]  # don't store password
+    else:
+      st.session_state["password_correct"] = False
+
+  if "password_correct" not in st.session_state:
+    # First run, show input for password
+    st.markdown("## 🔐 Affans Kitchen - Secure POS")
+    st.text_input(
+        "Enter Staff Passcode",
+        type="password",
+        on_change=password_entered,
+        key="password",
+    )
+    return False
+  elif not st.session_state["password_correct"]:
+    # Password incorrect, show input + error
+    st.markdown("## 🔐 Affans Kitchen - Secure POS")
+    st.text_input(
+        "Enter Staff Passcode",
+        type="password",
+        on_change=password_entered,
+        key="password",
+    )
+    st.error("😕 Passcode incorrect. Please try again.")
+    return False
+  else:
+    # Password correct
+    return True
+
+
+# Run the login check
+if not check_password():
+  st.stop()  # Stop execution here if not logged in
+
+
+# --- MAIN POS APP (Loads only after correct login) ---
+
 # Menu items and prices
 MENU = {
     "Cheeseburger": 8.50,
@@ -25,8 +73,15 @@ TAX_RATE = 0.08  # 8% Tax
 if "cart" not in st.session_state:
   st.session_state.cart = {}
 
-# Restaurant Title
-st.title("🍽️ Affans Kitchen - POS System")
+# Top bar with title and logout button
+title_col, logout_col = st.columns([3, 1])
+with title_col:
+  st.title("🍽️ Affans Kitchen - POS System")
+with logout_col:
+  if st.button("🔒 Logout", use_container_width=True):
+    st.session_state["password_correct"] = False
+    st.rerun()
+
 st.markdown("---")
 
 # Layout: Two columns for menu and cart
