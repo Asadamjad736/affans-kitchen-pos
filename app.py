@@ -2,7 +2,7 @@
 Affan's Kitchen - Restaurant Order / POS System
 ------------------------------------------------
 A single-file Streamlit app for taking orders (Breakfast / Lunch / Dinner),
-printing bills/receipts, and tracking daily sales.
+printing bills/receipts, tracking daily sales, and managing inventory.
 """
 
 import streamlit as st
@@ -50,8 +50,9 @@ def get_pakistan_time():
     """Get current time in Pakistan (UTC+5)"""
     return datetime.utcnow() + PAKISTAN_OFFSET
 
-# Initialize database
+# Initialize databases
 def init_db():
+    # Orders database
     conn = sqlite3.connect('orders.db')
     c = conn.cursor()
     c.execute('''
@@ -70,6 +71,25 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
+    
+    # Inventory database
+    conn = sqlite3.connect('inventory.db')
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS inventory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_name TEXT UNIQUE,
+            category TEXT,
+            quantity REAL,
+            unit TEXT,
+            min_stock REAL,
+            cost_per_unit REAL,
+            last_updated TEXT,
+            notes TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
 def save_order_to_db(order):
     """Save order to SQLite database"""
@@ -82,7 +102,7 @@ def save_order_to_db(order):
         order["order_id"],
         order["date"],
         order["time"],
-        json.dumps(order["items"]),  # Store items as JSON
+        json.dumps(order["items"]),
         order["subtotal"],
         order["tax_rate"],
         order["tax_amount"],
@@ -102,11 +122,11 @@ def load_orders_from_db():
     orders = []
     for row in rows:
         orders.append({
-            "db_id": row[0],  # Database ID for deletion
+            "db_id": row[0],
             "order_id": row[1],
             "date": row[2],
             "time": row[3],
-            "items": json.loads(row[4]),  # Parse JSON back to list
+            "items": json.loads(row[4]),
             "subtotal": row[5],
             "tax_rate": row[6],
             "tax_amount": row[7],
@@ -130,7 +150,78 @@ def delete_all_orders_from_db():
     conn.commit()
     conn.close()
 
-# Initialize database
+# Inventory database functions
+def add_inventory_item(item_name, category, quantity, unit, min_stock, cost_per_unit, notes=""):
+    """Add a new item to inventory"""
+    conn = sqlite3.connect('inventory.db')
+    c = conn.cursor()
+    last_updated = get_pakistan_time().strftime("%d-%m-%Y %I:%M %p")
+    try:
+        c.execute('''
+            INSERT INTO inventory (item_name, category, quantity, unit, min_stock, cost_per_unit, last_updated, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (item_name, category, quantity, unit, min_stock, cost_per_unit, last_updated, notes))
+        conn.commit()
+        conn.close()
+        return True, "Item added successfully!"
+    except sqlite3.IntegrityError:
+        conn.close()
+        return False, "Item already exists!"
+
+def update_inventory_quantity(item_id, new_quantity):
+    """Update quantity of an inventory item"""
+    conn = sqlite3.connect('inventory.db')
+    c = conn.cursor()
+    last_updated = get_pakistan_time().strftime("%d-%m-%Y %I:%M %p")
+    c.execute('UPDATE inventory SET quantity = ?, last_updated = ? WHERE id = ?', (new_quantity, last_updated, item_id))
+    conn.commit()
+    conn.close()
+
+def update_inventory_item(item_id, item_name, category, quantity, unit, min_stock, cost_per_unit, notes):
+    """Update all fields of an inventory item"""
+    conn = sqlite3.connect('inventory.db')
+    c = conn.cursor()
+    last_updated = get_pakistan_time().strftime("%d-%m-%Y %I:%M %p")
+    c.execute('''
+        UPDATE inventory 
+        SET item_name = ?, category = ?, quantity = ?, unit = ?, min_stock = ?, cost_per_unit = ?, last_updated = ?, notes = ?
+        WHERE id = ?
+    ''', (item_name, category, quantity, unit, min_stock, cost_per_unit, last_updated, notes, item_id))
+    conn.commit()
+    conn.close()
+
+def delete_inventory_item(item_id):
+    """Delete an inventory item"""
+    conn = sqlite3.connect('inventory.db')
+    c = conn.cursor()
+    c.execute('DELETE FROM inventory WHERE id = ?', (item_id,))
+    conn.commit()
+    conn.close()
+
+def load_inventory():
+    """Load all inventory items"""
+    conn = sqlite3.connect('inventory.db')
+    c = conn.cursor()
+    c.execute('SELECT * FROM inventory ORDER BY category, item_name')
+    rows = c.fetchall()
+    conn.close()
+    
+    inventory = []
+    for row in rows:
+        inventory.append({
+            "id": row[0],
+            "item_name": row[1],
+            "category": row[2],
+            "quantity": row[3],
+            "unit": row[4],
+            "min_stock": row[5],
+            "cost_per_unit": row[6],
+            "last_updated": row[7],
+            "notes": row[8]
+        })
+    return inventory
+
+# Initialize databases
 init_db()
 
 # Initialize session state
@@ -140,27 +231,33 @@ if "cart" not in st.session_state:
 if "order_placed" not in st.session_state:
     st.session_state.order_placed = False
 
-# Store last order details for bill display
 if "last_order" not in st.session_state:
     st.session_state.last_order = None
 
-# Load orders from database
 if "daily_orders" not in st.session_state:
     st.session_state.daily_orders = load_orders_from_db()
 
-# Initialize quantity states for menu items
 if "menu_qty" not in st.session_state:
     st.session_state.menu_qty = {}
 
 if "items_added" not in st.session_state:
     st.session_state.items_added = set()
 
-# Delete confirmation states
 if "delete_confirm" not in st.session_state:
     st.session_state.delete_confirm = None
 
 if "delete_all_confirm" not in st.session_state:
     st.session_state.delete_all_confirm = False
+
+# Inventory session states
+if "inv_delete_confirm" not in st.session_state:
+    st.session_state.inv_delete_confirm = None
+
+if "editing_item" not in st.session_state:
+    st.session_state.editing_item = None
+
+if "inventory" not in st.session_state:
+    st.session_state.inventory = load_inventory()
 
 
 def add_to_cart(item, price, qty=1):
@@ -227,7 +324,6 @@ def save_order_to_history():
     tax_amount = round(subtotal * tax_rate / 100)
     grand_total = subtotal + tax_amount
     
-    # Get next order ID
     existing_orders = load_orders_from_db()
     next_order_id = 1 if not existing_orders else max(o["order_id"] for o in existing_orders) + 1
     
@@ -242,13 +338,8 @@ def save_order_to_history():
         "grand_total": grand_total
     }
     
-    # Save to session state
     st.session_state.daily_orders = load_orders_from_db()
-    
-    # Save to database
     save_order_to_db(order)
-    
-    # Store this order for bill display
     st.session_state.last_order = order
 
 
@@ -258,7 +349,6 @@ st.markdown(f"# 🍲 {RESTAURANT_NAME}")
 st.caption(RESTAURANT_TAGLINE)
 st.caption(f"🕐 Pakistan Time: {current_time.strftime('%d-%m-%Y %I:%M %p')}")
 
-# Show live clock using JavaScript
 st.components.v1.html(f"""
     <div style="text-align: right; font-size: 16px; color: #666; padding: 5px;">
         <span id="live-clock"></span>
@@ -266,7 +356,6 @@ st.components.v1.html(f"""
     <script>
         function updateClock() {{
             const now = new Date();
-            // Pakistan is UTC+5
             const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
             const pakistan = new Date(utc + (5 * 3600000));
             const options = {{ 
@@ -288,7 +377,7 @@ st.components.v1.html(f"""
 st.divider()
 
 # Navigation
-page = st.sidebar.selectbox("📌 Navigation", ["📋 Take Order", "📊 Sales Report"])
+page = st.sidebar.selectbox("📌 Navigation", ["📋 Take Order", "📊 Sales Report", "📦 Inventory"])
 
 if page == "📋 Take Order":
     menu_col, cart_col = st.columns([2, 1])
@@ -303,25 +392,20 @@ if page == "📋 Take Order":
                     c1.write(f"**{item}**")
                     c2.write(f"Rs. {price}")
                     
-                    # Initialize quantity in session state if not exists
                     qty_key = f"qty_{category}_{item}"
                     if qty_key not in st.session_state:
                         st.session_state[qty_key] = 0
                     
-                    # Minus button
                     if c3.button("➖", key=f"minus_{category}_{item}"):
                         if st.session_state[qty_key] > 0:
                             st.session_state[qty_key] -= 1
-                            # Update cart
                             if item in st.session_state.cart:
                                 decrease_qty(item)
                                 st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
                         st.rerun()
                     
-                    # Quantity display
                     c4.markdown(f"<div style='text-align: center; padding: 5px; font-weight: bold;'>{st.session_state[qty_key]}</div>", unsafe_allow_html=True)
                     
-                    # Plus button
                     if c5.button("➕", key=f"plus_{category}_{item}"):
                         st.session_state[qty_key] += 1
                         add_to_cart(item, price, 1)
@@ -344,10 +428,8 @@ if page == "📋 Take Order":
                 c1.write(f"**{item}**")
                 c2.write(f"Rs. {line_total}")
                 
-                # Minus button in cart
                 if c3.button("➖", key=f"cart_minus_{item}"):
                     decrease_qty(item)
-                    # Update menu quantity
                     for category in MENU:
                         if item in MENU[category]:
                             qty_key = f"qty_{category}_{item}"
@@ -355,13 +437,10 @@ if page == "📋 Take Order":
                                 st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
                     st.rerun()
                 
-                # Quantity display
                 c4.markdown(f"<div style='text-align: center; font-size: 14px;'>{qty}</div>", unsafe_allow_html=True)
                 
-                # Plus button in cart
                 if c5.button("➕", key=f"cart_plus_{item}"):
                     increase_qty(item, price)
-                    # Update menu quantity
                     for category in MENU:
                         if item in MENU[category]:
                             qty_key = f"qty_{category}_{item}"
@@ -386,9 +465,7 @@ if page == "📋 Take Order":
                     save_order_to_history()
                     st.session_state.order_placed = True
                     st.success(f"✅ Order placed successfully! Grand Total: Rs. {grand_total}")
-                    # Clear cart after placing order
                     clear_cart()
-                    # Reset menu quantities
                     for key in list(st.session_state.keys()):
                         if key.startswith("qty_"):
                             st.session_state[key] = 0
@@ -396,13 +473,11 @@ if page == "📋 Take Order":
             with col_b:
                 if st.button("🗑️ Clear Order", use_container_width=True):
                     clear_cart()
-                    # Reset menu quantities
                     for key in list(st.session_state.keys()):
                         if key.startswith("qty_"):
                             st.session_state[key] = 0
                     st.rerun()
 
-    # Show bill using last_order
     if st.session_state.last_order:
         st.divider()
         st.subheader("🖨️ Bill / Receipt")
@@ -435,7 +510,6 @@ if page == "📋 Take Order":
         receipt_lines.append("=" * 40)
 
         receipt_text = "\n".join(receipt_lines)
-
         st.code(receipt_text, language=None)
 
         col_bill1, col_bill2 = st.columns(2)
@@ -455,13 +529,11 @@ if page == "📋 Take Order":
 elif page == "📊 Sales Report":
     st.subheader("📊 Daily Sales Report")
     
-    # Refresh orders from database
     st.session_state.daily_orders = load_orders_from_db()
     
     if not st.session_state.daily_orders:
         st.info("No orders have been placed yet. Start taking orders to see sales data!")
     else:
-        # Get date filter
         dates = list(set(order["date"] for order in st.session_state.daily_orders))
         dates.sort(reverse=True)
         
@@ -469,7 +541,6 @@ elif page == "📊 Sales Report":
         with col_date:
             selected_date = st.selectbox("Select Date", ["All Dates"] + dates)
         with col_delete:
-            # Delete All button with confirmation
             if not st.session_state.delete_all_confirm:
                 if st.button("🗑️ Delete All Orders", use_container_width=True, type="secondary"):
                     st.session_state.delete_all_confirm = True
@@ -494,7 +565,6 @@ elif page == "📊 Sales Report":
         else:
             filtered_orders = [order for order in st.session_state.daily_orders if order["date"] == selected_date]
         
-        # Summary metrics
         total_orders = len(filtered_orders)
         total_sales = sum(order["grand_total"] for order in filtered_orders)
         total_tax = sum(order["tax_amount"] for order in filtered_orders)
@@ -506,7 +576,6 @@ elif page == "📊 Sales Report":
         
         st.divider()
         
-        # Product-wise breakdown
         st.subheader("📦 Product-wise Breakdown")
         
         product_sales = {}
@@ -531,7 +600,6 @@ elif page == "📊 Sales Report":
             df_products = df_products.sort_values("Total Revenue (Rs.)", ascending=False)
             st.dataframe(df_products, use_container_width=True, hide_index=True)
             
-            # Bar chart
             st.subheader("📊 Sales by Product")
             chart_data = pd.DataFrame({
                 "Product": [d["Product"] for d in sales_data],
@@ -543,7 +611,6 @@ elif page == "📊 Sales Report":
         
         st.divider()
         
-        # Order history with delete functionality
         st.subheader("📝 Order History")
         
         if not filtered_orders:
@@ -564,7 +631,6 @@ elif page == "📊 Sales Report":
                         st.write(f"**Grand Total:** Rs. {order['grand_total']}")
                     
                     with col_del:
-                        # Delete confirmation for individual order
                         if st.session_state.delete_confirm != order['db_id']:
                             if st.button("🗑️ Delete", key=f"delete_{order['db_id']}", use_container_width=True):
                                 st.session_state.delete_confirm = order['db_id']
@@ -584,7 +650,6 @@ elif page == "📊 Sales Report":
                                     st.session_state.delete_confirm = None
                                     st.rerun()
         
-        # Export option
         st.divider()
         if filtered_orders:
             if st.button("📥 Download Sales Report (CSV)", use_container_width=True):
@@ -615,3 +680,185 @@ elif page == "📊 Sales Report":
                     key="download_csv",
                     use_container_width=True
                 )
+
+elif page == "📦 Inventory":
+    st.subheader("📦 Inventory Management")
+    
+    # Refresh inventory data
+    st.session_state.inventory = load_inventory()
+    
+    # Tabs for viewing and adding inventory
+    inv_tab1, inv_tab2 = st.tabs(["📋 View Inventory", "➕ Add Item"])
+    
+    with inv_tab1:
+        if not st.session_state.inventory:
+            st.info("No items in inventory. Add some items to get started!")
+        else:
+            # Category filter
+            categories = list(set(item["category"] for item in st.session_state.inventory))
+            categories.sort()
+            selected_category = st.selectbox("Filter by Category", ["All Categories"] + categories)
+            
+            if selected_category == "All Categories":
+                filtered_inventory = st.session_state.inventory
+            else:
+                filtered_inventory = [item for item in st.session_state.inventory if item["category"] == selected_category]
+            
+            # Low stock alert
+            low_stock_items = [item for item in filtered_inventory if item["quantity"] <= item["min_stock"]]
+            if low_stock_items:
+                st.warning(f"⚠️ {len(low_stock_items)} item(s) are low on stock and need reordering!")
+            
+            # Display inventory as cards
+            for item in filtered_inventory:
+                stock_status = "🔴" if item["quantity"] <= item["min_stock"] else "🟢"
+                
+                with st.expander(f"{stock_status} {item['item_name']} - {item['quantity']} {item['unit']} ({item['category']})"):
+                    if st.session_state.editing_item == item['id']:
+                        # Edit mode
+                        st.markdown("**Edit Item**")
+                        edit_name = st.text_input("Item Name", value=item['item_name'], key=f"edit_name_{item['id']}")
+                        edit_category = st.text_input("Category", value=item['category'], key=f"edit_cat_{item['id']}")
+                        
+                        col_qty, col_unit = st.columns(2)
+                        with col_qty:
+                            edit_quantity = st.number_input("Quantity", value=float(item['quantity']), step=0.1, key=f"edit_qty_{item['id']}")
+                        with col_unit:
+                            edit_unit = st.text_input("Unit", value=item['unit'], key=f"edit_unit_{item['id']}")
+                        
+                        col_min, col_cost = st.columns(2)
+                        with col_min:
+                            edit_min_stock = st.number_input("Min Stock Level", value=float(item['min_stock']), step=0.1, key=f"edit_min_{item['id']}")
+                        with col_cost:
+                            edit_cost = st.number_input("Cost per Unit (Rs.)", value=float(item['cost_per_unit']), step=0.01, key=f"edit_cost_{item['id']}")
+                        
+                        edit_notes = st.text_area("Notes", value=item['notes'], key=f"edit_notes_{item['id']}")
+                        
+                        col_save, col_cancel = st.columns(2)
+                        with col_save:
+                            if st.button("💾 Save", key=f"save_{item['id']}", use_container_width=True):
+                                update_inventory_item(item['id'], edit_name, edit_category, edit_quantity, edit_unit, edit_min_stock, edit_cost, edit_notes)
+                                st.session_state.inventory = load_inventory()
+                                st.session_state.editing_item = None
+                                st.success("Item updated!")
+                                st.rerun()
+                        with col_cancel:
+                            if st.button("❌ Cancel", key=f"cancel_edit_{item['id']}", use_container_width=True):
+                                st.session_state.editing_item = None
+                                st.rerun()
+                    else:
+                        # View mode
+                        col_info, col_actions = st.columns([3, 1])
+                        
+                        with col_info:
+                            st.write(f"**Category:** {item['category']}")
+                            st.write(f"**Quantity:** {item['quantity']} {item['unit']}")
+                            st.write(f"**Min Stock Level:** {item['min_stock']} {item['unit']}")
+                            st.write(f"**Cost per Unit:** Rs. {item['cost_per_unit']:.2f}")
+                            st.write(f"**Total Value:** Rs. {item['quantity'] * item['cost_per_unit']:.2f}")
+                            st.write(f"**Last Updated:** {item['last_updated']}")
+                            if item['notes']:
+                                st.write(f"**Notes:** {item['notes']}")
+                        
+                        with col_actions:
+                            # Quick stock adjustment
+                            st.write("**Quick Adjust:**")
+                            col_add, col_sub = st.columns(2)
+                            with col_add:
+                                if st.button("➕", key=f"qadd_{item['id']}"):
+                                    new_qty = item['quantity'] + 1
+                                    update_inventory_quantity(item['id'], new_qty)
+                                    st.session_state.inventory = load_inventory()
+                                    st.rerun()
+                            with col_sub:
+                                if st.button("➖", key=f"qsub_{item['id']}"):
+                                    new_qty = max(0, item['quantity'] - 1)
+                                    update_inventory_quantity(item['id'], new_qty)
+                                    st.session_state.inventory = load_inventory()
+                                    st.rerun()
+                            
+                            st.divider()
+                            
+                            if st.button("✏️ Edit", key=f"edit_{item['id']}", use_container_width=True):
+                                st.session_state.editing_item = item['id']
+                                st.rerun()
+                            
+                            if st.session_state.inv_delete_confirm != item['id']:
+                                if st.button("🗑️ Delete", key=f"inv_del_{item['id']}", use_container_width=True):
+                                    st.session_state.inv_delete_confirm = item['id']
+                                    st.rerun()
+                            else:
+                                st.warning("Confirm?")
+                                col_y, col_n = st.columns(2)
+                                with col_y:
+                                    if st.button("✅", key=f"inv_confirm_{item['id']}", use_container_width=True):
+                                        delete_inventory_item(item['id'])
+                                        st.session_state.inventory = load_inventory()
+                                        st.session_state.inv_delete_confirm = None
+                                        st.success("Item deleted!")
+                                        st.rerun()
+                                with col_n:
+                                    if st.button("❌", key=f"inv_cancel_{item['id']}", use_container_width=True):
+                                        st.session_state.inv_delete_confirm = None
+                                        st.rerun()
+            
+            # Inventory summary
+            st.divider()
+            st.subheader("📊 Inventory Summary")
+            
+            total_items = len(filtered_inventory)
+            total_value = sum(item['quantity'] * item['cost_per_unit'] for item in filtered_inventory)
+            low_stock_count = len([item for item in filtered_inventory if item['quantity'] <= item['min_stock']])
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Items", total_items)
+            col2.metric("Total Inventory Value", f"Rs. {total_value:,.2f}")
+            col3.metric("Low Stock Items", low_stock_count, delta=f"{low_stock_count}" if low_stock_count > 0 else "0")
+            
+            # Export inventory
+            if st.button("📥 Download Inventory (CSV)", use_container_width=True):
+                inv_data = []
+                for item in filtered_inventory:
+                    inv_data.append({
+                        "Item Name": item['item_name'],
+                        "Category": item['category'],
+                        "Quantity": item['quantity'],
+                        "Unit": item['unit'],
+                        "Min Stock": item['min_stock'],
+                        "Cost per Unit": item['cost_per_unit'],
+                        "Total Value": item['quantity'] * item['cost_per_unit'],
+                        "Status": "Low Stock" if item['quantity'] <= item['min_stock'] else "In Stock",
+                        "Last Updated": item['last_updated'],
+                        "Notes": item['notes']
+                    })
+                
+                df_inv = pd.DataFrame(inv_data)
+                csv_inv = df_inv.to_csv(index=False)
+                
+                st.download_button(
+                    "Click to Download",
+                    csv_inv,
+                    f"inventory_{get_pakistan_time().strftime('%Y%m%d')}.csv",
+                    "text/csv",
+                    key="download_inv_csv",
+                    use_container_width=True
+                )
+    
+    with inv_tab2:
+        st.subheader("Add New Inventory Item")
+        
+        with st.form("add_inventory_form"):
+            new_name = st.text_input("Item Name*", placeholder="e.g., Chicken Breast")
+            new_category = st.text_input("Category*", placeholder="e.g., Meat, Vegetables, Spices")
+            
+            col_q, col_u = st.columns(2)
+            with col_q:
+                new_quantity = st.number_input("Initial Quantity*", min_value=0.0, step=0.1)
+            with col_u:
+                new_unit = st.selectbox("Unit*", ["kg", "g", "litre", "ml", "pieces", "packets", "dozen", "bottles", "cans"])
+            
+            col_m, col_c = st.columns(2)
+            with col_m:
+                new_min_stock = st.number_input("Minimum Stock Level", min_value=0.0, step=0.1, value=1.0)
+            with col_c:
+                new_cost = st.number_input("Cost per Unit (Rs.)", min_value=0.0, step=0.
