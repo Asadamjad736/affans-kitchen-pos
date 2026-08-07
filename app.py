@@ -378,19 +378,19 @@ with right:
                 use_container_width=True
             ):
 
-                st.session_state.current_total = total
+               st.session_state.current_total = total
 
-                st.session_state.current_datetime = datetime.now().strftime(
-                    "%d-%b-%Y %I:%M:%S %p"
-                )
+st.session_state.current_datetime = datetime.now().strftime(
+    "%d-%b-%Y %I:%M:%S %p"
+)
 
-                 st.session_state.order_no
+st.session_state.order_no += 1
 
-                st.success(
-                    f"Order #{st.session_state.order_no} Ready"
-                )
+st.success(
+    f"Order #{st.session_state.order_no} Ready"
+)
 
-                st.balloons()
+st.balloons()
     # ==============================
 # RECEIPT
 # ==============================
