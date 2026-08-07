@@ -7,10 +7,10 @@ and professional receipt generation.
 
 import streamlit as st
 from datetime import datetime, date, timedelta
-import base64
 import json
 import pandas as pd
 import plotly.express as px
+import os
 from pathlib import Path
 
 st.set_page_config(
@@ -19,6 +19,11 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Constants
+RESTAURANT_NAME = "Affan's Kitchen"
+RESTAURANT_TAGLINE = "Tradition in Every Bite"
+TAX_RATE = 5  # Default tax rate
 
 # Menu Configuration
 MENU = {
@@ -48,25 +53,47 @@ MENU = {
     },
 }
 
-# Constants
-RESTAURANT_NAME = "Affan's Kitchen"
-RESTAURANT_TAGLINE = "Tradition in Every Bite"
-TAX_RATE = 5  # Default tax rate
+# Data persistence functions
+def get_data_dir():
+    """Create and return data directory path"""
+    data_dir = Path("data")
+    data_dir.mkdir(exist_ok=True)
+    return data_dir
 
-# Initialize session state
+def load_json(filename):
+    """Load data from JSON file"""
+    data_dir = get_data_dir()
+    file_path = data_dir / filename
+    if file_path.exists():
+        try:
+            with open(file_path, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_json(filename, data):
+    """Save data to JSON file"""
+    data_dir = get_data_dir()
+    file_path = data_dir / filename
+    with open(file_path, 'w') as f:
+        json.dump(data, f, indent=2)
+
+# Initialize session state with persistence
 def init_session_state():
     defaults = {
         "cart": {},
         "order_placed": False,
-        "order_history": [],
-        "daily_sales": {},
-        "inventory": {},
+        "order_history": load_json("orders.json"),
+        "daily_sales": load_json("daily_sales.json"),
+        "inventory": load_json("inventory.json"),
         "current_order_number": 1,
         "tax_rate": TAX_RATE,
         "discount": 0,
         "customer_name": "",
         "customer_phone": "",
         "order_type": "Dine In",
+        "data_loaded": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -81,6 +108,22 @@ def init_session_state():
                     "low_stock_threshold": 10,
                     "cost_price": 0,
                 }
+        save_json("inventory.json", st.session_state.inventory)
+    
+    # Set current order number from history
+    if st.session_state.order_history:
+        max_order = 0
+        for order in st.session_state.order_history:
+            # Extract order number from string like "ORD-240101-0001"
+            try:
+                num = int(order['order_number'].split('-')[-1])
+                if num > max_order:
+                    max_order = num
+            except:
+                pass
+        st.session_state.current_order_number = max_order + 1
+    
+    st.session_state.data_loaded = True
 
 init_session_state()
 
@@ -100,6 +143,7 @@ def add_to_cart(item, price, qty=1):
     
     # Update inventory
     st.session_state.inventory[item]["stock"] -= qty
+    save_json("inventory.json", st.session_state.inventory)
     st.session_state.order_placed = False
     return True
 
@@ -108,6 +152,7 @@ def remove_from_cart(item):
         # Return to inventory
         qty = st.session_state.cart[item]["qty"]
         st.session_state.inventory[item]["stock"] += qty
+        save_json("inventory.json", st.session_state.inventory)
         del st.session_state.cart[item]
     st.session_state.order_placed = False
 
@@ -115,6 +160,7 @@ def clear_cart():
     # Return all items to inventory
     for item, data in st.session_state.cart.items():
         st.session_state.inventory[item]["stock"] += data["qty"]
+    save_json("inventory.json", st.session_state.inventory)
     st.session_state.cart = {}
     st.session_state.order_placed = False
     # Clear quantity inputs
@@ -133,6 +179,7 @@ def generate_receipt():
     grand_total = total + tax_amount - discount
     
     receipt_lines = []
+    receipt_lines.append("=" * 40)
     receipt_lines.append(RESTAURANT_NAME.center(40))
     receipt_lines.append(RESTAURANT_TAGLINE.center(40))
     receipt_lines.append("=" * 40)
@@ -159,6 +206,7 @@ def generate_receipt():
     receipt_lines.append("=" * 40)
     receipt_lines.append("Thank you for dining with us!".center(40))
     receipt_lines.append("Please visit again!".center(40))
+    receipt_lines.append("=" * 40)
     
     return "\n".join(receipt_lines), order_number, order_time, grand_total
 
@@ -174,6 +222,7 @@ def save_order_to_history(receipt_text, order_number, order_time, grand_total):
         "timestamp": datetime.now().isoformat()
     }
     st.session_state.order_history.append(order_data)
+    save_json("orders.json", st.session_state.order_history)
     st.session_state.current_order_number += 1
     
     # Update daily sales
@@ -198,6 +247,8 @@ def save_order_to_history(receipt_text, order_number, order_time, grand_total):
             daily["categories"][category] = {"count": 0, "revenue": 0}
         daily["categories"][category]["count"] += data["qty"]
         daily["categories"][category]["revenue"] += data["qty"] * data["price"]
+    
+    save_json("daily_sales.json", st.session_state.daily_sales)
 
 # UI Layout
 # Header
@@ -344,6 +395,12 @@ with cart_col:
                     save_order_to_history(receipt_text, order_number, order_time, grand_total)
                     st.success(f"Order {order_number} placed successfully!")
                     st.balloons()
+                    # Clear cart after order
+                    st.session_state.cart = {}
+                    for key in list(st.session_state.keys()):
+                        if key.startswith("qty_"):
+                            del st.session_state[key]
+                    st.rerun()
                 else:
                     st.warning("Cart is empty!")
         
@@ -354,10 +411,8 @@ with cart_col:
         
         with col3:
             if st.button("📝 Quick Order", use_container_width=True):
-                # Pre-set a sample order for quick testing
                 sample_items = list(st.session_state.cart.keys())
                 if not sample_items:
-                    # Add sample items
                     for category, items in MENU.items():
                         for item, price in list(items.items())[:2]:
                             add_to_cart(item, price, 1)
@@ -426,7 +481,6 @@ with analytics_col:
         # Recent Orders
         with st.expander("📋 Daily Orders Detail", expanded=False):
             for order_num in daily['orders']:
-                # Find order in history
                 for order in st.session_state.order_history:
                     if order['order_number'] == order_num:
                         st.caption(f"**{order['order_number']}** | {order['date']} | Rs. {order['total']:,}")
@@ -468,58 +522,6 @@ with analytics_col:
                     file_name=f"sales_data_{datetime.now().strftime('%Y%m%d')}.csv",
                     mime="text/csv",
                 )
-
-# Receipt Display
-if st.session_state.order_placed and st.session_state.cart:
-    st.divider()
-    st.subheader("🖨️ Receipt")
-    
-    receipt_text, order_number, order_time, grand_total = generate_receipt()
-    
-    # Display receipt
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.code(receipt_text, language=None)
-        
-        # Action buttons
-        col_a, col_b, col_c = st.columns(3)
-        with col_a:
-            st.download_button(
-                "⬇️ Download",
-                data=receipt_text,
-                file_name=f"receipt_{order_number}.txt",
-                mime="text/plain",
-                use_container_width=True
-            )
-        with col_b:
-            # Print function without logo
-            print_html = f'''
-            <div id="receipt-print" style="display:none;">
-                <pre style="font-family: monospace; white-space: pre;">{receipt_text}</pre>
-            </div>
-            <button onclick="printReceipt()" style="padding:10px 20px; font-size:16px; cursor:pointer; background:#4CAF50; color:white; border:none; border-radius:5px;">
-                🖨️ Print
-            </button>
-            <script>
-            function printReceipt() {{
-                var content = document.getElementById('receipt-print').innerHTML;
-                var printWindow = window.open('', '', 'width=400,height=650');
-                printWindow.document.write('<div style="font-size:14px;">' + content + '</div>');
-                printWindow.document.close();
-                printWindow.print();
-            }}
-            </script>
-            '''
-            st.components.v1.html(print_html, height=70)
-        with col_c:
-            if st.button("✅ New Order", use_container_width=True):
-                clear_cart()
-                st.session_state.order_placed = False
-                st.rerun()
-
-# Auto-clear order placed state after showing receipt
-if st.session_state.order_placed and not st.session_state.cart:
-    st.session_state.order_placed = False
 
 # Footer
 st.divider()
