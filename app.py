@@ -114,7 +114,6 @@ def init_session_state():
     if st.session_state.order_history:
         max_order = 0
         for order in st.session_state.order_history:
-            # Extract order number from string like "ORD-240101-0001"
             try:
                 num = int(order['order_number'].split('-')[-1])
                 if num > max_order:
@@ -316,29 +315,40 @@ with menu_col:
                     
                     with col_qty:
                         qty_key = f"qty_{category}_{item}"
+                        
+                        # FIX: Initialize qty_key if it doesn't exist
                         if qty_key not in st.session_state:
                             st.session_state[qty_key] = 0
                         
                         col_minus, col_num, col_plus = st.columns([1, 2, 1])
                         
+                        # FIX: Use callbacks instead of direct manipulation
+                        def decrement_qty(key=item, qk=qty_key):
+                            if st.session_state[qk] > 0:
+                                st.session_state[qk] -= 1
+                                if st.session_state[qk] == 0:
+                                    remove_from_cart(key)
+                                else:
+                                    if key in st.session_state.cart:
+                                        st.session_state.cart[key]["qty"] = st.session_state[qk]
+                        
+                        def increment_qty(key=item, qk=qty_key, p=price):
+                            if st.session_state[qk] < st.session_state.inventory[key]["stock"]:
+                                st.session_state[qk] += 1
+                                add_to_cart(key, p, 1)
+                        
                         if col_minus.button("−", key=f"minus_{qty_key}", disabled=st.session_state[qty_key] == 0):
-                            st.session_state[qty_key] -= 1
-                            if st.session_state[qty_key] == 0:
-                                remove_from_cart(item)
-                            else:
-                                if item in st.session_state.cart:
-                                    st.session_state.cart[item]["qty"] = st.session_state[qty_key]
+                            decrement_qty()
                             st.rerun()
                         
-                        col_num.number_input("", key=qty_key, min_value=0, max_value=min(50, st.session_state.inventory[item]["stock"]), 
-                                           step=1, label_visibility="collapsed")
+                        col_num.number_input("", key=qty_key, min_value=0, 
+                                            max_value=st.session_state.inventory[item]["stock"], 
+                                            step=1, label_visibility="collapsed")
                         
-                        if col_plus.button("+", key=f"plus_{qty_key}", disabled=st.session_state[qty_key] >= st.session_state.inventory[item]["stock"]):
-                            st.session_state[qty_key] += 1
-                            if add_to_cart(item, price, 1):
-                                st.rerun()
-                            else:
-                                st.session_state[qty_key] -= 1
+                        if col_plus.button("+", key=f"plus_{qty_key}", 
+                                         disabled=st.session_state[qty_key] >= st.session_state.inventory[item]["stock"]):
+                            increment_qty()
+                            st.rerun()
 
 with cart_col:
     st.subheader("🧾 Current Order")
