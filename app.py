@@ -355,7 +355,7 @@ with right:
     use_container_width=True
 ):
 
-    save_order()
+   if st.button("Checkout"):
 
     st.session_state.order_number += 1
 
