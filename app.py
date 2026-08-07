@@ -1,166 +1,232 @@
+"""
+Affan's Kitchen - Restaurant Order / POS System
+------------------------------------------------
+A single-file Streamlit app for taking orders (Breakfast / Lunch / Dinner)
+and printing a bill/receipt.
+
+Run locally:
+    pip install -r requirements.txt
+    streamlit run streamlit_app.py
+
+Put your logo file (renamed to "logo.png") in the same folder as this
+script if you want it to appear at the top of the page.
+"""
+
 import streamlit as st
+from datetime import datetime
+import os
 
-# Page configuration for mobile and desktop responsiveness
-st.set_page_config(
-    page_title="Affans Kitchen - POS", page_icon="🍔", layout="wide"
-)
+# ---------------------------------------------------------------------------
+# PAGE CONFIG
+# ---------------------------------------------------------------------------
+st.set_page_config(page_title="Affan's Kitchen - POS", page_icon="🍲", layout="wide")
 
-# --- LOGIN CONFIGURATION ---
-# Set your desired passcode here
-POS_PASSCODE = "1234"
-
-
-def check_password():
-  """Returns True if the user entered the correct password."""
-
-  def password_entered():
-    if st.session_state["password"] == POS_PASSCODE:
-      st.session_state["password_correct"] = True
-      del st.session_state["password"]  # don't store password
-    else:
-      st.session_state["password_correct"] = False
-
-  if "password_correct" not in st.session_state:
-    # First run, show input for password
-    st.markdown("## 🔐 Affans Kitchen - Secure POS")
-    st.text_input(
-        "Enter Staff Passcode",
-        type="password",
-        on_change=password_entered,
-        key="password",
-    )
-    return False
-  elif not st.session_state["password_correct"]:
-    # Password incorrect, show input + error
-    st.markdown("## 🔐 Affans Kitchen - Secure POS")
-    st.text_input(
-        "Enter Staff Passcode",
-        type="password",
-        on_change=password_entered,
-        key="password",
-    )
-    st.error("😕 Passcode incorrect. Please try again.")
-    return False
-  else:
-    # Password correct
-    return True
-
-
-# Run the login check
-if not check_password():
-  st.stop()  # Stop execution here if not logged in
-
-
-# --- MAIN POS APP (Loads only after correct login) ---
-
-# Menu items and prices
+# ---------------------------------------------------------------------------
+# MENU  (spelling corrected — edit the prices to match your real prices)
+# ---------------------------------------------------------------------------
 MENU = {
-    "Cheeseburger": 8.50,
-    "Chicken Burger": 7.50,
-    "French Fries": 3.00,
-    "Onion Rings": 3.50,
-    "Soft Drink": 2.00,
-    "Bottled Water": 1.50,
-    "Pepperoni Pizza": 12.00,
-    "Margherita Pizza": 10.00,
-    "Chocolate Brownie": 4.00,
-    "Ice Cream Scoop": 2.50,
+    "Breakfast": {
+        "Aloo Paratha": 150,
+        "Chana": 120,
+        "Omelette": 80,
+        "Fried Egg": 70,
+        "Egg Masala": 130,
+        "Tea": 50,
+    },
+    "Lunch": {
+        "Daal Chawal": 200,
+        "Anda Tikki": 90,
+        "Naan": 40,
+        "Raita": 60,
+        "Salad": 50,
+        "Achaar": 30,
+    },
+    "Dinner": {
+        "Chicken Kabab": 250,
+        "Mutton Kabab": 350,
+        "Leg Piece": 300,
+        "Chest Piece": 280,
+        "Tikka Boti": 320,
+        "Malai Boti": 330,
+    },
 }
 
-TAX_RATE = 0.08  # 8% Tax
+RESTAURANT_NAME = "Affan's Kitchen"
+RESTAURANT_TAGLINE = "Tradition in Every Bite"
 
-# Initialize cart in session state
+# ---------------------------------------------------------------------------
+# SESSION STATE
+# ---------------------------------------------------------------------------
 if "cart" not in st.session_state:
-  st.session_state.cart = {}
+    st.session_state.cart = {}  # {item_name: {"qty": int, "price": int}}
 
-# Top bar with title and logout button
-title_col, logout_col = st.columns([3, 1])
+if "order_placed" not in st.session_state:
+    st.session_state.order_placed = False
+
+
+def add_to_cart(item, price, qty):
+    if qty <= 0:
+        return
+    if item in st.session_state.cart:
+        st.session_state.cart[item]["qty"] += qty
+    else:
+        st.session_state.cart[item] = {"qty": qty, "price": price}
+
+
+def remove_from_cart(item):
+    if item in st.session_state.cart:
+        del st.session_state.cart[item]
+
+
+def clear_cart():
+    st.session_state.cart = {}
+    st.session_state.order_placed = False
+
+
+# ---------------------------------------------------------------------------
+# HEADER
+# ---------------------------------------------------------------------------
+logo_col, title_col = st.columns([1, 4])
+with logo_col:
+    if os.path.exists("logo.png"):
+        st.image("logo.png", width=110)
 with title_col:
-  st.title("🍽️ Affans Kitchen - POS System")
-with logout_col:
-  if st.button("🔒 Logout", use_container_width=True):
-    st.session_state["password_correct"] = False
-    st.rerun()
+    st.markdown(f"## {RESTAURANT_NAME}")
+    st.caption(RESTAURANT_TAGLINE)
 
-st.markdown("---")
+st.divider()
 
-# Layout: Two columns for menu and cart
-col1, col2 = st.columns([1.5, 1])
+# ---------------------------------------------------------------------------
+# MENU + ORDERING UI
+# ---------------------------------------------------------------------------
+menu_col, cart_col = st.columns([2, 1])
 
-with col1:
-  st.subheader("Menu Items")
+with menu_col:
+    st.subheader("📋 Menu")
+    tabs = st.tabs(list(MENU.keys()))
+    for tab, category in zip(tabs, MENU.keys()):
+        with tab:
+            for item, price in MENU[category].items():
+                c1, c2, c3 = st.columns([3, 1, 1])
+                c1.write(f"**{item}**")
+                c2.write(f"Rs. {price}")
+                qty = c3.number_input(
+                    "Qty", min_value=0, max_value=50, value=0, step=1,
+                    key=f"{category}_{item}", label_visibility="collapsed"
+                )
+                if qty > 0:
+                    st.session_state.setdefault("_pending_qty", {})[f"{category}_{item}"] = (item, price, qty)
 
-  # Display menu buttons in a grid
-  menu_items = list(MENU.items())
-  for i in range(0, len(menu_items), 2):
-    c1, c2 = st.columns(2)
-    with c1:
-      item1, price1 = menu_items[i]
-      if st.button(
-          f"{item1}\n${price1:.2f}",
-          key=f"btn_{item1}",
-          use_container_width=True,
-      ):
-        if item1 in st.session_state.cart:
-          st.session_state.cart[item1] += 1
-        else:
-          st.session_state.cart[item1] = 1
-        st.rerun()
+            if st.button(f"Add {category} items to order", key=f"add_{category}"):
+                pending = st.session_state.get("_pending_qty", {})
+                added_any = False
+                for k, (item, price, qty) in list(pending.items()):
+                    if k.startswith(category):
+                        add_to_cart(item, price, qty)
+                        added_any = True
+                if added_any:
+                    st.success(f"{category} items added to order.")
+                else:
+                    st.info("Set a quantity above 0 before adding.")
 
-    if i + 1 < len(menu_items):
-      with c2:
-        item2, price2 = menu_items[i + 1]
-        if st.button(
-            f"{item2}\n${price2:.2f}",
-            key=f"btn_{item2}",
-            use_container_width=True,
-        ):
-          if item2 in st.session_state.cart:
-            st.session_state.cart[item2] += 1
-          else:
-            st.session_state.cart[item2] = 1
-          st.rerun()
+# ---------------------------------------------------------------------------
+# CART / ORDER SUMMARY
+# ---------------------------------------------------------------------------
+with cart_col:
+    st.subheader("🧾 Current Order")
 
-with col2:
-  st.subheader("Current Order")
+    if not st.session_state.cart:
+        st.info("No items added yet.")
+    else:
+        total = 0
+        for item, data in list(st.session_state.cart.items()):
+            qty = data["qty"]
+            price = data["price"]
+            line_total = qty * price
+            total += line_total
 
-  if not st.session_state.cart:
-    st.info("Your cart is empty. Tap menu items to add.")
-  else:
-    subtotal = 0.0
+            c1, c2, c3 = st.columns([3, 1, 1])
+            c1.write(f"{item} x{qty}")
+            c2.write(f"Rs. {line_total}")
+            if c3.button("❌", key=f"remove_{item}"):
+                remove_from_cart(item)
+                st.rerun()
 
-    # Display cart items
-    for item, qty in list(st.session_state.cart.items()):
-      price = MENU[item]
-      item_total = price * qty
-      subtotal += item_total
+        st.divider()
+        tax_rate = st.number_input("Tax / Service %", min_value=0, max_value=30, value=0, step=1)
+        tax_amount = round(total * tax_rate / 100)
+        grand_total = total + tax_amount
 
-      sc1, sc2, sc3 = st.columns([2, 1, 1])
-      with sc1:
-        st.text(f"{item}\n${price:.2f}x{qty}")
-      with sc2:
-        st.text(f"${item_total:.2f}")
-      with sc3:
-        if st.button("❌", key=f"rem_{item}"):
-          del st.session_state.cart[item]
-          st.rerun()
+        st.write(f"Subtotal: **Rs. {total}**")
+        st.write(f"Tax/Service ({tax_rate}%): **Rs. {tax_amount}**")
+        st.markdown(f"### Grand Total: Rs. {grand_total}")
 
-    st.markdown("---")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("✅ Place Order"):
+                st.session_state.order_placed = True
+        with col_b:
+            if st.button("🗑️ Clear Order"):
+                clear_cart()
+                st.rerun()
 
-    tax = subtotal * TAX_RATE
-    grand_total = subtotal + tax
+# ---------------------------------------------------------------------------
+# BILL / RECEIPT
+# ---------------------------------------------------------------------------
+if st.session_state.order_placed and st.session_state.cart:
+    st.divider()
+    st.subheader("🖨️ Bill / Receipt")
 
-    st.write(f"**Subtotal:** ${subtotal:.2f}")
-    st.write(f"**Tax (8%):** ${tax:.2f}")
-    st.markdown(f"### Total: ${grand_total:.2f}")
+    order_time = datetime.now().strftime("%d-%m-%Y %I:%M %p")
+    total = sum(d["qty"] * d["price"] for d in st.session_state.cart.values())
+    tax_rate = st.session_state.get("tax_rate", 0)
+    tax_amount = round(total * tax_rate / 100)
+    grand_total = total + tax_amount
 
-    btn_col1, btn_col2 = st.columns(2)
-    with btn_col1:
-      if st.button("Complete Order", type="primary", use_container_width=True):
-        st.success("Order Placed Successfully!")
-        st.session_state.cart = {}
-        st.rerun()
-    with btn_col2:
-      if st.button("Clear Cart", use_container_width=True):
-        st.session_state.cart = {}
-        st.rerun()
+    receipt_lines = []
+    receipt_lines.append(RESTAURANT_NAME.center(32))
+    receipt_lines.append(RESTAURANT_TAGLINE.center(32))
+    receipt_lines.append("-" * 32)
+    receipt_lines.append(f"Date: {order_time}")
+    receipt_lines.append("-" * 32)
+    receipt_lines.append(f"{'Item':<18}{'Qty':>4}{'Amt':>10}")
+    receipt_lines.append("-" * 32)
+    for item, data in st.session_state.cart.items():
+        qty = data["qty"]
+        price = data["price"]
+        line_total = qty * price
+        receipt_lines.append(f"{item[:18]:<18}{qty:>4}{line_total:>10}")
+    receipt_lines.append("-" * 32)
+    receipt_lines.append(f"{'Subtotal':<22}{total:>10}")
+    receipt_lines.append(f"{'Tax/Service':<22}{tax_amount:>10}")
+    receipt_lines.append(f"{'TOTAL':<22}{grand_total:>10}")
+    receipt_lines.append("-" * 32)
+    receipt_lines.append("Thank you for your order!".center(32))
+
+    receipt_text = "\n".join(receipt_lines)
+
+    st.code(receipt_text, language=None)
+
+    st.download_button(
+        "⬇️ Download Receipt (.txt)",
+        data=receipt_text,
+        file_name=f"receipt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+        mime="text/plain",
+    )
+
+    # Browser print button — opens the print dialog for this receipt only
+    print_html = f"""
+    <div id="receipt-print" style="font-family: monospace; white-space: pre; display:none;">{receipt_text}</div>
+    <button onclick="printReceipt()" style="padding:8px 16px; font-size:14px; cursor:pointer;">🖨️ Print Receipt</button>
+    <script>
+    function printReceipt() {{
+        var content = document.getElementById('receipt-print').innerText;
+        var printWindow = window.open('', '', 'width=400,height=600');
+        printWindow.document.write('<pre style="font-family:monospace; font-size:14px;">' + content + '</pre>');
+        printWindow.document.close();
+        printWindow.print();
+    }}
+    </script>
+    """
+    st.components.v1.html(print_html, height=60)
+
