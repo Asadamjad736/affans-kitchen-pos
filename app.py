@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import sqlite3
 import json
+import base64
 
 st.set_page_config(page_title="Affan's Kitchen - POS", page_icon="🍲", layout="wide")
 
@@ -68,7 +69,7 @@ if not st.session_state.authenticated:
             else:
                 st.error("❌ Incorrect passcode! Please try again.")
     
-    st.stop()  # Stop execution here if not authenticated
+    st.stop()
 
 # --- LOGOUT BUTTON IN SIDEBAR ---
 with st.sidebar:
@@ -77,113 +78,193 @@ with st.sidebar:
         st.rerun()
     st.divider()
 
-# --- REST OF YOUR APP CODE BELOW ---
-
 def get_pakistan_time():
     """Get current time in Pakistan (UTC+5)"""
     return datetime.utcnow() + PAKISTAN_OFFSET
 
-# Initialize database
-def init_db():
-    conn = sqlite3.connect('orders.db')
-    c = conn.cursor()
+def generate_receipt_html(order):
+    """Generate HTML receipt for printing"""
+    items_html = ""
+    for item in order["items"]:
+        items_html += f"""
+        <tr>
+            <td style="text-align: left; padding: 5px 10px;">{item['item'][:25]}</td>
+            <td style="text-align: center; padding: 5px 10px;">{item['qty']}</td>
+            <td style="text-align: right; padding: 5px 10px;">Rs. {item['total']}</td>
+        </tr>
+        """
     
-    # Orders table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            order_id INTEGER,
-            date TEXT,
-            time TEXT,
-            items TEXT,
-            subtotal REAL,
-            tax_rate REAL,
-            tax_amount REAL,
-            grand_total REAL,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            @media print {{
+                body {{ margin: 0; padding: 10px; }}
+                .no-print {{ display: none !important; }}
+                .receipt-container {{ max-width: 300px; margin: 0 auto; }}
+            }}
+            body {{
+                font-family: 'Courier New', monospace;
+                background: white;
+            }}
+            .receipt-container {{
+                max-width: 300px;
+                margin: 20px auto;
+                padding: 15px;
+                border: 1px dashed #ccc;
+                background: #fff;
+            }}
+            .header {{
+                text-align: center;
+                border-bottom: 1px dashed #000;
+                padding-bottom: 10px;
+                margin-bottom: 10px;
+            }}
+            .header h2 {{
+                margin: 5px 0;
+                font-size: 18px;
+            }}
+            .header p {{
+                margin: 3px 0;
+                font-size: 12px;
+                color: #666;
+            }}
+            .info {{
+                font-size: 13px;
+                margin: 10px 0;
+            }}
+            .info p {{
+                margin: 3px 0;
+            }}
+            .items-table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin: 10px 0;
+            }}
+            .items-table th {{
+                border-bottom: 1px solid #000;
+                padding: 5px 10px;
+                font-size: 13px;
+            }}
+            .items-table td {{
+                font-size: 13px;
+            }}
+            .total-section {{
+                border-top: 1px dashed #000;
+                padding-top: 10px;
+                margin-top: 10px;
+                font-size: 14px;
+            }}
+            .total-section .grand-total {{
+                font-size: 16px;
+                font-weight: bold;
+                margin-top: 5px;
+                padding-top: 5px;
+                border-top: 1px solid #000;
+            }}
+            .footer {{
+                text-align: center;
+                margin-top: 15px;
+                font-size: 12px;
+                color: #666;
+                border-top: 1px dashed #ccc;
+                padding-top: 10px;
+            }}
+            .print-btn {{
+                background: #4CAF50;
+                color: white;
+                border: none;
+                padding: 10px 30px;
+                font-size: 16px;
+                cursor: pointer;
+                border-radius: 5px;
+                margin: 10px 0;
+                width: 100%;
+            }}
+            .print-btn:hover {{
+                background: #45a049;
+            }}
+            .order-id {{
+                color: #4CAF50;
+                font-weight: bold;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="receipt-container">
+            <div class="header">
+                <h2>{RESTAURANT_NAME}</h2>
+                <p>{RESTAURANT_TAGLINE}</p>
+            </div>
+            
+            <div class="info">
+                <p><strong>Date:</strong> {order['date']} {order['time']} (PKT)</p>
+                <p><strong>Order #:</strong> <span class="order-id">{order['order_id']}</span></p>
+            </div>
+            
+            <table class="items-table">
+                <thead>
+                    <tr>
+                        <th style="text-align: left;">Item</th>
+                        <th style="text-align: center;">Qty</th>
+                        <th style="text-align: right;">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {items_html}
+                </tbody>
+            </table>
+            
+            <div class="total-section">
+                <p><strong>Subtotal:</strong> <span style="float: right;">Rs. {order['subtotal']}</span></p>
+                <p><strong>Tax ({order['tax_rate']}%):</strong> <span style="float: right;">Rs. {order['tax_amount']}</span></p>
+                <p class="grand-total"><strong>TOTAL:</strong> <span style="float: right;">Rs. {order['grand_total']}</span></p>
+            </div>
+            
+            <div class="footer">
+                <p>Thank you for your order!</p>
+                <p>Visit again 🍲</p>
+            </div>
+        </div>
+        
+        <div class="no-print" style="text-align: center;">
+            <button class="print-btn" onclick="window.print()">🖨️ Print Receipt</button>
+        </div>
+    </body>
+    </html>
+    """
+    return html
+
+def generate_receipt_text(order):
+    """Generate plain text receipt"""
+    order_time_str = f"{order['date']} {order['time']}"
     
-    # Menu/Inventory table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS menu (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            category TEXT NOT NULL,
-            item_name TEXT NOT NULL,
-            price REAL NOT NULL,
-            active INTEGER DEFAULT 1,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(category, item_name)
-        )
-    ''')
-    
-    # Initialize default menu if empty
-    c.execute('SELECT COUNT(*) FROM menu')
-    if c.fetchone()[0] == 0:
-        for category, items in DEFAULT_MENU.items():
-            for item_name, price in items.items():
-                c.execute('''
-                    INSERT INTO menu (category, item_name, price)
-                    VALUES (?, ?, ?)
-                ''', (category, item_name, price))
-    
-    conn.commit()
-    conn.close()
+    receipt_lines = []
+    receipt_lines.append("=" * 40)
+    receipt_lines.append(RESTAURANT_NAME.center(40))
+    receipt_lines.append(RESTAURANT_TAGLINE.center(40))
+    receipt_lines.append("=" * 40)
+    receipt_lines.append(f"Date: {order_time_str} (PKT)")
+    receipt_lines.append(f"Order #: {order['order_id']}")
+    receipt_lines.append("-" * 40)
+    receipt_lines.append(f"{'Item':<20}{'Qty':>6}{'Amt':>14}")
+    receipt_lines.append("-" * 40)
+    for item in order["items"]:
+        name = item["item"]
+        qty = item["qty"]
+        line_total = item["total"]
+        receipt_lines.append(f"{name[:20]:<20}{qty:>6}{line_total:>14}")
+    receipt_lines.append("-" * 40)
+    receipt_lines.append(f"{'Subtotal':<26}{order['subtotal']:>14}")
+    receipt_lines.append(f"{'Tax/Service':<26}{order['tax_amount']:>14}")
+    receipt_lines.append("-" * 40)
+    receipt_lines.append(f"{'TOTAL':<26}{order['grand_total']:>14}")
+    receipt_lines.append("=" * 40)
+    receipt_lines.append("Thank you for your order!".center(40))
+    receipt_lines.append("=" * 40)
 
-# ... (rest of your existing code remains exactly the same) ...
-"""
-Affan's Kitchen - Restaurant Order / POS System
-------------------------------------------------
-A single-file Streamlit app for taking orders (Breakfast / Lunch / Dinner),
-printing bills/receipts, tracking daily sales, and managing inventory.
-"""
-
-import streamlit as st
-from datetime import datetime, timedelta
-import pandas as pd
-import sqlite3
-import json
-
-st.set_page_config(page_title="Affan's Kitchen - POS", page_icon="🍲", layout="wide")
-
-# Default menu structure
-DEFAULT_MENU = {
-    "Breakfast": {
-        "Aloo Paratha": 150,
-        "Chana": 120,
-        "Omelette": 80,
-        "Fried Egg": 70,
-        "Egg Masala": 130,
-        "Tea": 50,
-    },
-    "Lunch": {
-        "Daal Chawal": 200,
-        "Anda Tikki": 90,
-        "Naan": 40,
-        "Raita": 60,
-        "Salad": 50,
-        "Achaar": 30,
-    },
-    "Dinner": {
-        "Chicken Kabab": 250,
-        "Mutton Kabab": 350,
-        "Leg Piece": 300,
-        "Chest Piece": 280,
-        "Tikka Boti": 320,
-        "Malai Boti": 330,
-    },
-}
-
-RESTAURANT_NAME = "Affan's Kitchen"
-RESTAURANT_TAGLINE = "Tradition in Every Bite"
-
-# Pakistan timezone offset (UTC+5)
-PAKISTAN_OFFSET = timedelta(hours=5)
-
-def get_pakistan_time():
-    """Get current time in Pakistan (UTC+5)"""
-    return datetime.utcnow() + PAKISTAN_OFFSET
+    return "\n".join(receipt_lines)
 
 # Initialize database
 def init_db():
@@ -244,7 +325,7 @@ def load_menu_from_db():
     menu = {}
     for row in rows:
         category, item_name, price, active = row
-        if active:  # Only load active items
+        if active:
             if category not in menu:
                 menu[category] = {}
             menu[category][item_name] = price
@@ -272,14 +353,12 @@ def update_menu_item(category, item_name, new_price, new_name=None):
     c = conn.cursor()
     try:
         if new_name and new_name != item_name:
-            # Update both name and price
             c.execute('''
                 UPDATE menu 
                 SET item_name = ?, price = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE category = ? AND item_name = ?
             ''', (new_name, new_price, category, item_name))
         else:
-            # Update only price
             c.execute('''
                 UPDATE menu 
                 SET price = ?, updated_at = CURRENT_TIMESTAMP
@@ -423,6 +502,9 @@ if "delete_all_confirm" not in st.session_state:
 if "inventory_editing" not in st.session_state:
     st.session_state.inventory_editing = None
 
+if "print_order" not in st.session_state:
+    st.session_state.print_order = None
+
 
 def add_to_cart(item, price, qty=1):
     """Add item to cart with specified quantity"""
@@ -545,148 +627,19 @@ st.divider()
 page = st.sidebar.selectbox("📌 Navigation", ["📋 Take Order", "📊 Sales Report", "📦 Inventory Management"])
 
 if page == "📋 Take Order":
-    # Reload menu to get latest changes
-    MENU = load_menu_from_db()
-    
-    menu_col, cart_col = st.columns([2, 1])
-
-    with menu_col:
-        st.subheader("📋 Menu")
+    # Check if we need to show print view
+    if st.session_state.print_order:
+        order = st.session_state.print_order
+        receipt_html = generate_receipt_html(order)
+        st.components.v1.html(receipt_html, height=600, scrolling=True)
         
-        if not MENU:
-            st.warning("No menu items available. Please add items in Inventory Management.")
-        else:
-            tabs = st.tabs(list(MENU.keys()))
-            for tab, category in zip(tabs, MENU.keys()):
-                with tab:
-                    for item, price in MENU[category].items():
-                        c1, c2, c3, c4, c5 = st.columns([2, 1, 0.5, 0.5, 0.5])
-                        c1.write(f"**{item}**")
-                        c2.write(f"Rs. {price}")
-                        
-                        qty_key = f"qty_{category}_{item}"
-                        if qty_key not in st.session_state:
-                            st.session_state[qty_key] = 0
-                        
-                        if c3.button("➖", key=f"minus_{category}_{item}"):
-                            if st.session_state[qty_key] > 0:
-                                st.session_state[qty_key] -= 1
-                                if item in st.session_state.cart:
-                                    decrease_qty(item)
-                                    st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
-                            st.rerun()
-                        
-                        c4.markdown(f"<div style='text-align: center; padding: 5px; font-weight: bold;'>{st.session_state[qty_key]}</div>", unsafe_allow_html=True)
-                        
-                        if c5.button("➕", key=f"plus_{category}_{item}"):
-                            st.session_state[qty_key] += 1
-                            add_to_cart(item, price, 1)
-                            st.rerun()
-
-    with cart_col:
-        st.subheader("🧾 Current Order")
-
-        if not st.session_state.cart:
-            st.info("No items added yet.")
-        else:
-            total = 0
-            for item, data in list(st.session_state.cart.items()):
-                qty = data["qty"]
-                price = data["price"]
-                line_total = qty * price
-                total += line_total
-
-                c1, c2, c3, c4, c5 = st.columns([2, 1, 0.4, 0.4, 0.4])
-                c1.write(f"**{item}**")
-                c2.write(f"Rs. {line_total}")
-                
-                if c3.button("➖", key=f"cart_minus_{item}"):
-                    decrease_qty(item)
-                    for category in MENU:
-                        if item in MENU[category]:
-                            qty_key = f"qty_{category}_{item}"
-                            if qty_key in st.session_state:
-                                st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
-                    st.rerun()
-                
-                c4.markdown(f"<div style='text-align: center; font-size: 14px;'>{qty}</div>", unsafe_allow_html=True)
-                
-                if c5.button("➕", key=f"cart_plus_{item}"):
-                    increase_qty(item, price)
-                    for category in MENU:
-                        if item in MENU[category]:
-                            qty_key = f"qty_{category}_{item}"
-                            if qty_key in st.session_state:
-                                st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
-                    st.rerun()
-
-            st.divider()
-            
-            tax_rate = st.number_input("Tax / Service %", min_value=0, max_value=30, value=0, step=1)
-            st.session_state["tax_rate"] = tax_rate
-            tax_amount = round(total * tax_rate / 100)
-            grand_total = total + tax_amount
-
-            st.write(f"Subtotal: **Rs. {total}**")
-            st.write(f"Tax/Service ({tax_rate}%): **Rs. {tax_amount}**")
-            st.markdown(f"### Grand Total: Rs. {grand_total}")
-
-            col_a, col_b = st.columns(2)
-            with col_a:
-                if st.button("✅ Place Order", use_container_width=True):
-                    save_order_to_history()
-                    st.session_state.order_placed = True
-                    st.success(f"✅ Order placed successfully! Grand Total: Rs. {grand_total}")
-                    clear_cart()
-                    for key in list(st.session_state.keys()):
-                        if key.startswith("qty_"):
-                            st.session_state[key] = 0
-                    st.rerun()
-            with col_b:
-                if st.button("🗑️ Clear Order", use_container_width=True):
-                    clear_cart()
-                    for key in list(st.session_state.keys()):
-                        if key.startswith("qty_"):
-                            st.session_state[key] = 0
-                    st.rerun()
-
-    # Show bill
-    if st.session_state.last_order:
-        st.divider()
-        st.subheader("🖨️ Bill / Receipt")
-        
-        order = st.session_state.last_order
-        order_time_str = f"{order['date']} {order['time']}"
-        
-        receipt_lines = []
-        receipt_lines.append("=" * 40)
-        receipt_lines.append(RESTAURANT_NAME.center(40))
-        receipt_lines.append(RESTAURANT_TAGLINE.center(40))
-        receipt_lines.append("=" * 40)
-        receipt_lines.append(f"Date: {order_time_str} (PKT)")
-        receipt_lines.append(f"Order #: {order['order_id']}")
-        receipt_lines.append("-" * 40)
-        receipt_lines.append(f"{'Item':<20}{'Qty':>6}{'Amt':>14}")
-        receipt_lines.append("-" * 40)
-        for item in order["items"]:
-            name = item["item"]
-            qty = item["qty"]
-            line_total = item["total"]
-            receipt_lines.append(f"{name[:20]:<20}{qty:>6}{line_total:>14}")
-        receipt_lines.append("-" * 40)
-        receipt_lines.append(f"{'Subtotal':<26}{order['subtotal']:>14}")
-        receipt_lines.append(f"{'Tax/Service':<26}{order['tax_amount']:>14}")
-        receipt_lines.append("-" * 40)
-        receipt_lines.append(f"{'TOTAL':<26}{order['grand_total']:>14}")
-        receipt_lines.append("=" * 40)
-        receipt_lines.append("Thank you for your order!".center(40))
-        receipt_lines.append("=" * 40)
-
-        receipt_text = "\n".join(receipt_lines)
-        st.code(receipt_text, language=None)
-
-        col_bill1, col_bill2 = st.columns(2)
-        with col_bill1:
+        col_back, col_download = st.columns(2)
+        with col_back:
+            if st.button("⬅️ Back to POS", use_container_width=True):
+                st.session_state.print_order = None
+                st.rerun()
+        with col_download:
+            receipt_text = generate_receipt_text(order)
             st.download_button(
                 "⬇️ Download Receipt (.txt)",
                 data=receipt_text,
@@ -694,13 +647,140 @@ if page == "📋 Take Order":
                 mime="text/plain",
                 use_container_width=True
             )
-        with col_bill2:
-            if st.button("📋 New Order", use_container_width=True):
-                st.session_state.last_order = None
-                st.rerun()
+    else:
+        # Reload menu to get latest changes
+        MENU = load_menu_from_db()
+        
+        menu_col, cart_col = st.columns([2, 1])
+
+        with menu_col:
+            st.subheader("📋 Menu")
+            
+            if not MENU:
+                st.warning("No menu items available. Please add items in Inventory Management.")
+            else:
+                tabs = st.tabs(list(MENU.keys()))
+                for tab, category in zip(tabs, MENU.keys()):
+                    with tab:
+                        for item, price in MENU[category].items():
+                            c1, c2, c3, c4, c5 = st.columns([2, 1, 0.5, 0.5, 0.5])
+                            c1.write(f"**{item}**")
+                            c2.write(f"Rs. {price}")
+                            
+                            qty_key = f"qty_{category}_{item}"
+                            if qty_key not in st.session_state:
+                                st.session_state[qty_key] = 0
+                            
+                            if c3.button("➖", key=f"minus_{category}_{item}"):
+                                if st.session_state[qty_key] > 0:
+                                    st.session_state[qty_key] -= 1
+                                    if item in st.session_state.cart:
+                                        decrease_qty(item)
+                                        st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
+                                st.rerun()
+                            
+                            c4.markdown(f"<div style='text-align: center; padding: 5px; font-weight: bold;'>{st.session_state[qty_key]}</div>", unsafe_allow_html=True)
+                            
+                            if c5.button("➕", key=f"plus_{category}_{item}"):
+                                st.session_state[qty_key] += 1
+                                add_to_cart(item, price, 1)
+                                st.rerun()
+
+        with cart_col:
+            st.subheader("🧾 Current Order")
+
+            if not st.session_state.cart:
+                st.info("No items added yet.")
+            else:
+                total = 0
+                for item, data in list(st.session_state.cart.items()):
+                    qty = data["qty"]
+                    price = data["price"]
+                    line_total = qty * price
+                    total += line_total
+
+                    c1, c2, c3, c4, c5 = st.columns([2, 1, 0.4, 0.4, 0.4])
+                    c1.write(f"**{item}**")
+                    c2.write(f"Rs. {line_total}")
+                    
+                    if c3.button("➖", key=f"cart_minus_{item}"):
+                        decrease_qty(item)
+                        for category in MENU:
+                            if item in MENU[category]:
+                                qty_key = f"qty_{category}_{item}"
+                                if qty_key in st.session_state:
+                                    st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
+                        st.rerun()
+                    
+                    c4.markdown(f"<div style='text-align: center; font-size: 14px;'>{qty}</div>", unsafe_allow_html=True)
+                    
+                    if c5.button("➕", key=f"cart_plus_{item}"):
+                        increase_qty(item, price)
+                        for category in MENU:
+                            if item in MENU[category]:
+                                qty_key = f"qty_{category}_{item}"
+                                if qty_key in st.session_state:
+                                    st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
+                        st.rerun()
+
+                st.divider()
+                
+                tax_rate = st.number_input("Tax / Service %", min_value=0, max_value=30, value=0, step=1)
+                st.session_state["tax_rate"] = tax_rate
+                tax_amount = round(total * tax_rate / 100)
+                grand_total = total + tax_amount
+
+                st.write(f"Subtotal: **Rs. {total}**")
+                st.write(f"Tax/Service ({tax_rate}%): **Rs. {tax_amount}**")
+                st.markdown(f"### Grand Total: Rs. {grand_total}")
+
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    if st.button("✅ Place Order", use_container_width=True):
+                        save_order_to_history()
+                        st.session_state.order_placed = True
+                        st.success(f"✅ Order placed successfully! Grand Total: Rs. {grand_total}")
+                        clear_cart()
+                        for key in list(st.session_state.keys()):
+                            if key.startswith("qty_"):
+                                st.session_state[key] = 0
+                        st.rerun()
+                with col_b:
+                    if st.button("🗑️ Clear Order", use_container_width=True):
+                        clear_cart()
+                        for key in list(st.session_state.keys()):
+                            if key.startswith("qty_"):
+                                st.session_state[key] = 0
+                        st.rerun()
+
+        # Show bill with print option
+        if st.session_state.last_order:
+            st.divider()
+            st.subheader("🖨️ Bill / Receipt")
+            
+            order = st.session_state.last_order
+            receipt_text = generate_receipt_text(order)
+            st.code(receipt_text, language=None)
+
+            col_bill1, col_bill2, col_bill3 = st.columns(3)
+            with col_bill1:
+                if st.button("🖨️ Print Receipt", use_container_width=True, type="primary"):
+                    st.session_state.print_order = order
+                    st.rerun()
+            with col_bill2:
+                st.download_button(
+                    "⬇️ Download (.txt)",
+                    data=receipt_text,
+                    file_name=f"receipt_{order['order_id']}_{order['date'].replace('-', '')}.txt",
+                    mime="text/plain",
+                    use_container_width=True
+                )
+            with col_bill3:
+                if st.button("📋 New Order", use_container_width=True):
+                    st.session_state.last_order = None
+                    st.rerun()
 
 elif page == "📊 Sales Report":
-    # [Same sales report code as before]
     st.subheader("📊 Daily Sales Report")
     
     st.session_state.daily_orders = load_orders_from_db()
@@ -790,39 +870,66 @@ elif page == "📊 Sales Report":
         if not filtered_orders:
             st.info("No orders found for the selected date.")
         else:
-            for order in filtered_orders:
-                with st.expander(f"Order #{order['order_id']} - {order['date']} at {order['time']} - Rs. {order['grand_total']}"):
-                    col_info, col_del = st.columns([4, 1])
-                    
-                    with col_info:
-                        st.write(f"**Date:** {order['date']}")
-                        st.write(f"**Time:** {order['time']} (PKT)")
-                        st.write(f"**Items:**")
-                        for item in order["items"]:
-                            st.write(f"  • {item['item']} x{item['qty']} = Rs. {item['total']}")
-                        st.write(f"**Subtotal:** Rs. {order['subtotal']}")
-                        st.write(f"**Tax ({order['tax_rate']}%):** Rs. {order['tax_amount']}")
-                        st.write(f"**Grand Total:** Rs. {order['grand_total']}")
-                    
-                    with col_del:
-                        if st.session_state.delete_confirm != order['db_id']:
-                            if st.button("🗑️ Delete", key=f"delete_{order['db_id']}", use_container_width=True):
-                                st.session_state.delete_confirm = order['db_id']
+            # Check if we need to show print view for an order
+            if st.session_state.print_order:
+                order = st.session_state.print_order
+                receipt_html = generate_receipt_html(order)
+                st.components.v1.html(receipt_html, height=600, scrolling=True)
+                
+                col_back_print, col_download_print = st.columns(2)
+                with col_back_print:
+                    if st.button("⬅️ Back to Sales Report", use_container_width=True):
+                        st.session_state.print_order = None
+                        st.rerun()
+                with col_download_print:
+                    receipt_text = generate_receipt_text(order)
+                    st.download_button(
+                        "⬇️ Download Receipt (.txt)",
+                        data=receipt_text,
+                        file_name=f"receipt_{order['order_id']}_{order['date'].replace('-', '')}.txt",
+                        mime="text/plain",
+                        use_container_width=True
+                    )
+            else:
+                for order in filtered_orders:
+                    with st.expander(f"Order #{order['order_id']} - {order['date']} at {order['time']} - Rs. {order['grand_total']}"):
+                        col_info, col_actions = st.columns([3, 1])
+                        
+                        with col_info:
+                            st.write(f"**Date:** {order['date']}")
+                            st.write(f"**Time:** {order['time']} (PKT)")
+                            st.write(f"**Items:**")
+                            for item in order["items"]:
+                                st.write(f"  • {item['item']} x{item['qty']} = Rs. {item['total']}")
+                            st.write(f"**Subtotal:** Rs. {order['subtotal']}")
+                            st.write(f"**Tax ({order['tax_rate']}%):** Rs. {order['tax_amount']}")
+                            st.write(f"**Grand Total:** Rs. {order['grand_total']}")
+                        
+                        with col_actions:
+                            # Print button for each order
+                            if st.button("🖨️ Print", key=f"print_{order['db_id']}", use_container_width=True):
+                                st.session_state.print_order = order
                                 st.rerun()
-                        else:
-                            st.warning("⚠️ Confirm delete?")
-                            col_y, col_n = st.columns(2)
-                            with col_y:
-                                if st.button("✅", key=f"confirm_{order['db_id']}", use_container_width=True):
-                                    delete_order_from_db(order['db_id'])
-                                    st.session_state.daily_orders = load_orders_from_db()
-                                    st.session_state.delete_confirm = None
-                                    st.success(f"Order #{order['order_id']} deleted!")
+                            
+                            # Delete button with confirmation
+                            if st.session_state.delete_confirm != order['db_id']:
+                                if st.button("🗑️ Delete", key=f"delete_{order['db_id']}", use_container_width=True):
+                                    st.session_state.delete_confirm = order['db_id']
                                     st.rerun()
-                            with col_n:
-                                if st.button("❌", key=f"cancel_{order['db_id']}", use_container_width=True):
-                                    st.session_state.delete_confirm = None
-                                    st.rerun()
+                            else:
+                                st.warning("⚠️ Confirm delete?")
+                                col_y, col_n = st.columns(2)
+                                with col_y:
+                                    if st.button("✅", key=f"confirm_{order['db_id']}", use_container_width=True):
+                                        delete_order_from_db(order['db_id'])
+                                        st.session_state.daily_orders = load_orders_from_db()
+                                        st.session_state.delete_confirm = None
+                                        st.success(f"Order #{order['order_id']} deleted!")
+                                        st.rerun()
+                                with col_n:
+                                    if st.button("❌", key=f"cancel_{order['db_id']}", use_container_width=True):
+                                        st.session_state.delete_confirm = None
+                                        st.rerun()
         
         st.divider()
         if filtered_orders:
@@ -843,209 +950,7 @@ elif page == "📊 Sales Report":
                             "Grand Total (Rs.)": order["grand_total"]
                         })
                 
-                df_export = pd.DataFrame(all_orders_data)
-                csv = df_export.to_csv(index=False)
-                
-                st.download_button(
-                    "Click to Download CSV",
-                    csv,
-                    f"sales_report_{selected_date.replace('-', '')}.csv",
-                    "text/csv",
-                    key="download_csv",
-                    use_container_width=True
-                )
-
-elif page == "📦 Inventory Management":
-    st.subheader("📦 Inventory & Menu Management")
-    
-    # Tabs for different inventory operations
-    inv_tab1, inv_tab2, inv_tab3 = st.tabs(["📋 Current Menu", "➕ Add New Product", "✏️ Edit Products"])
-    
-    with inv_tab1:
-        st.write("### Current Menu Items")
-        
-        all_items = get_all_menu_items()
-        
-        if not all_items:
-            st.info("No items in menu. Add some products!")
-        else:
-            # Group by category
-            categories = {}
-            for item in all_items:
-                category, item_name, price, active = item
-                if category not in categories:
-                    categories[category] = []
-                categories[category].append({
-                    "name": item_name,
-                    "price": price,
-                    "active": active
-                })
-            
-            for category, items in categories.items():
-                with st.expander(f"📁 {category} ({len(items)} items)", expanded=True):
-                    # Create table
-                    data = []
-                    for item in items:
-                        status = "✅ Active" if item["active"] else "❌ Inactive"
-                        data.append({
-                            "Item": item["name"],
-                            "Price (Rs.)": item["price"],
-                            "Status": status
-                        })
-                    
-                    df = pd.DataFrame(data)
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-    
-    with inv_tab2:
-        st.write("### ➕ Add New Product")
-        
-        # Get existing categories
-        existing_categories = get_all_categories()
-        
-        col1, col2 = st.columns([1, 1])
-        
-        with col1:
-            # Option to select existing category or create new
-            category_option = st.radio(
-                "Category",
-                ["Select Existing", "Create New"],
-                horizontal=True
-            )
-            
-            if category_option == "Select Existing":
-                if existing_categories:
-                    category = st.selectbox("Choose Category", existing_categories)
-                else:
-                    st.warning("No categories exist. Please create a new one.")
-                    category = st.text_input("New Category Name")
-            else:
-                category = st.text_input("New Category Name", placeholder="e.g., Beverages, Desserts")
-        
-        with col2:
-            item_name = st.text_input("Product Name", placeholder="e.g., Chicken Biryani")
-            price = st.number_input("Price (Rs.)", min_value=0, step=10, value=100)
-        
-        if st.button("➕ Add Product", use_container_width=True, type="primary"):
-            if not category or not item_name:
-                st.error("Please fill in all fields!")
-            elif price <= 0:
-                st.error("Price must be greater than 0!")
-            else:
-                success, message = add_menu_item(category, item_name, price)
-                if success:
-                    st.success(message)
-                    # Reload menu
-                    MENU = load_menu_from_db()
-                else:
-                    st.error(message)
-    
-    with inv_tab3:
-        st.write("### ✏️ Edit or Delete Products")
-        
-        all_items = get_all_menu_items()
-        
-        if not all_items:
-            st.info("No items to edit.")
-        else:
-            # Select item to edit
-            item_options = {}
-            for item in all_items:
-                category, item_name, price, active = item
-                key = f"{category} > {item_name}"
-                item_options[key] = {
-                    "category": category,
-                    "name": item_name,
-                    "price": price,
-                    "active": active
-                }
-            
-            selected_item_key = st.selectbox(
-                "Select Product to Edit",
-                list(item_options.keys())
-            )
-            
-            if selected_item_key:
-                selected = item_options[selected_item_key]
-                
-                st.divider()
-                st.write(f"**Current Details:**")
-                st.write(f"- Category: **{selected['category']}**")
-                st.write(f"- Name: **{selected['name']}**")
-                st.write(f"- Price: **Rs. {selected['price']}**")
-                st.write(f"- Status: **{'Active' if selected['active'] else 'Inactive'}**")
-                
-                st.divider()
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    new_name = st.text_input("New Name", value=selected['name'])
-                    new_price = st.number_input("New Price (Rs.)", 
-                                               min_value=0, 
-                                               step=10, 
-                                               value=int(selected['price']))
-                
-                with col2:
-                    st.write("")  # Spacing
-                    st.write("")
-                    # Toggle active status
-                    new_status = st.checkbox("Active (visible in menu)", value=bool(selected['active']))
-                
-                col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
-                
-                with col_btn1:
-                    if st.button("💾 Update Product", use_container_width=True, type="primary"):
-                        if new_price <= 0:
-                            st.error("Price must be greater than 0!")
-                        else:
-                            success, message = update_menu_item(
-                                selected['category'],
-                                selected['name'],
-                                new_price,
-                                new_name if new_name != selected['name'] else None
-                            )
-                            if success:
-                                # Update active status if changed
-                                if new_status != selected['active']:
-                                    toggle_menu_item(selected['category'], new_name, 1 if new_status else 0)
-                                st.success(message)
-                                MENU = load_menu_from_db()
-                                st.rerun()
-                            else:
-                                st.error(message)
-                
-                with col_btn2:
-                    if new_status != selected['active']:
-                        action = "Activate" if new_status else "Deactivate"
-                        if st.button(f"🔄 {action}", use_container_width=True):
-                            toggle_menu_item(selected['category'], selected['name'], 1 if new_status else 0)
-                            st.success(f"Product {action.lower()}d successfully!")
-                            MENU = load_menu_from_db()
-                            st.rerun()
-                
-                with col_btn3:
-                    if st.button("🗑️ Delete Product", use_container_width=True, type="secondary"):
-                        # Confirmation
-                        if st.session_state.inventory_editing != selected_item_key:
-                            st.session_state.inventory_editing = selected_item_key
-                            st.rerun()
-                
-                # Delete confirmation
-                if st.session_state.inventory_editing == selected_item_key:
-                    st.warning(f"⚠️ Are you sure you want to delete '{selected['name']}'? This cannot be undone!")
-                    col_y, col_n = st.columns(2)
-                    with col_y:
-                        if st.button("✅ Yes, Delete", key=f"del_confirm_{selected_item_key}"):
-                            delete_menu_item(selected['category'], selected['name'])
-                            st.success(f"'{selected['name']}' deleted successfully!")
-                            st.session_state.inventory_editing = None
-                            MENU = load_menu_from_db()
-                            st.rerun()
-                    with col_n:
-                        if st.button("❌ Cancel", key=f"del_cancel_{selected_item_key}"):
-                            st.session_state.inventory_editing = None
-                            st.rerun()
-
+                df_
 
 
 
