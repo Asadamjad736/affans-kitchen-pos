@@ -8,6 +8,8 @@ printing bills/receipts, and tracking daily sales.
 import streamlit as st
 from datetime import datetime, timedelta
 import pandas as pd
+import sqlite3
+import json
 
 st.set_page_config(page_title="Affan's Kitchen - POS", page_icon="🍲", layout="wide")
 
@@ -48,6 +50,72 @@ def get_pakistan_time():
     """Get current time in Pakistan (UTC+5)"""
     return datetime.utcnow() + PAKISTAN_OFFSET
 
+# Initialize database
+def init_db():
+    conn = sqlite3.connect('orders.db')
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER,
+            date TEXT,
+            time TEXT,
+            items TEXT,
+            subtotal REAL,
+            tax_rate REAL,
+            tax_amount REAL,
+            grand_total REAL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def save_order_to_db(order):
+    """Save order to SQLite database"""
+    conn = sqlite3.connect('orders.db')
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO orders (order_id, date, time, items, subtotal, tax_rate, tax_amount, grand_total)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        order["order_id"],
+        order["date"],
+        order["time"],
+        json.dumps(order["items"]),  # Store items as JSON
+        order["subtotal"],
+        order["tax_rate"],
+        order["tax_amount"],
+        order["grand_total"]
+    ))
+    conn.commit()
+    conn.close()
+
+def load_orders_from_db():
+    """Load all orders from SQLite database"""
+    conn = sqlite3.connect('orders.db')
+    c = conn.cursor()
+    c.execute('SELECT order_id, date, time, items, subtotal, tax_rate, tax_amount, grand_total FROM orders ORDER BY id')
+    rows = c.fetchall()
+    conn.close()
+    
+    orders = []
+    for row in rows:
+        orders.append({
+            "order_id": row[0],
+            "date": row[1],
+            "time": row[2],
+            "items": json.loads(row[3]),  # Parse JSON back to list
+            "subtotal": row[4],
+            "tax_rate": row[5],
+            "tax_amount": row[6],
+            "grand_total": row[7]
+        })
+    return orders
+
+# Initialize database
+init_db()
+
 # Initialize session state
 if "cart" not in st.session_state:
     st.session_state.cart = {}
@@ -55,14 +123,14 @@ if "cart" not in st.session_state:
 if "order_placed" not in st.session_state:
     st.session_state.order_placed = False
 
+# Load orders from database
 if "daily_orders" not in st.session_state:
-    st.session_state.daily_orders = []
+    st.session_state.daily_orders = load_orders_from_db()
 
 # Initialize quantity states for menu items
 if "menu_qty" not in st.session_state:
     st.session_state.menu_qty = {}
 
-# Track if items were added to avoid duplicate additions
 if "items_added" not in st.session_state:
     st.session_state.items_added = set()
 
@@ -106,7 +174,7 @@ def clear_cart():
 
 
 def save_order_to_history():
-    """Save current order to daily orders history"""
+    """Save current order to history and database"""
     if not st.session_state.cart:
         return
     
@@ -142,7 +210,11 @@ def save_order_to_history():
         "grand_total": grand_total
     }
     
+    # Save to session state
     st.session_state.daily_orders.append(order)
+    
+    # Save to database
+    save_order_to_db(order)
 
 
 # App Header
@@ -280,6 +352,9 @@ if page == "📋 Take Order":
                     save_order_to_history()
                     st.session_state.order_placed = True
                     st.success(f"✅ Order placed successfully! Grand Total: Rs. {grand_total}")
+                    # Clear cart after placing order
+                    clear_cart()
+                    st.rerun()
             with col_b:
                 if st.button("🗑️ Clear Order", use_container_width=True):
                     clear_cart()
@@ -333,6 +408,9 @@ if page == "📋 Take Order":
 elif page == "📊 Sales Report":
     st.subheader("📊 Daily Sales Report")
     
+    # Refresh orders from database
+    st.session_state.daily_orders = load_orders_from_db()
+    
     if not st.session_state.daily_orders:
         st.info("No orders have been placed yet. Start taking orders to see sales data!")
     else:
@@ -354,8 +432,8 @@ elif page == "📊 Sales Report":
         
         col1, col2, col3 = st.columns(3)
         col1.metric("Total Orders", total_orders)
-        col2.metric("Total Sales (Rs.)", f"{total_sales:,}")
-        col3.metric("Total Tax (Rs.)", f"{total_tax:,}")
+        col2.metric("Total Sales (Rs.)", f"{total_sales:,.2f}")
+        col3.metric("Total Tax (Rs.)", f"{total_tax:,.2f}")
         
         st.divider()
         
