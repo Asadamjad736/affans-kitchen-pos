@@ -373,24 +373,24 @@ with right:
 
         with col2:
 
-            if st.button(
-                "✅ Checkout",
-                use_container_width=True
-            ):
+           with col2:
 
-               st.session_state.current_total = total
+    if st.button(
+        "✅ Checkout",
+        use_container_width=True
+    ):
 
-st.session_state.current_datetime = datetime.now().strftime(
-    "%d-%b-%Y %I:%M:%S %p"
-)
+        st.session_state.current_total = total
 
-st.session_state.order_no += 1
+        st.session_state.current_datetime = datetime.now().strftime(
+            "%d-%b-%Y %I:%M:%S %p"
+        )
 
-st.success(
-    f"Order #{st.session_state.order_no} Ready"
-)
+        st.success(
+            f"Order #{st.session_state.order_no} Ready"
+        )
 
-st.balloons()
+        st.rerun()
     # ==============================
 # RECEIPT
 # ==============================
@@ -518,53 +518,40 @@ if len(st.session_state.cart) > 0:
 
     st.success("Thank you for visiting Affan's Kitchen ❤️")
 
-    if st.button(
-        "🖨️ Complete Order",
-        use_container_width=True
-    ):
+    if st.button("🖨️ Complete Order", use_container_width=True):
 
-        with open(
-            ORDERS_FILE,
-            "a",
-            newline="",
-            encoding="utf-8"
-        ) as f:
+    # Save order to CSV
+    with open(ORDERS_FILE, "a", newline="", encoding="utf-8") as f:
 
-            writer = csv.writer(f)
+        writer = csv.writer(f)
 
-            items = []
+        items = [
+            f"{i['item']} x{i['qty']}"
+            for i in st.session_state.cart
+        ]
 
-            for i in st.session_state.cart:
+        writer.writerow([
+            st.session_state.order_no,
+            datetime.now().strftime("%d-%m-%Y"),
+            datetime.now().strftime("%I:%M:%S %p"),
+            st.session_state.staff,
+            ", ".join(items),
+            total
+        ])
 
-                items.append(
-                    f"{i['item']} x{i['qty']}"
-                )
+    # Increase order number AFTER saving
+    st.session_state.order_no += 1
 
-            writer.writerow([
+    # Clear cart
+    st.session_state.cart = []
 
-                st.session_state.order_no,
+    # Success message
+    st.success("✅ Order Completed Successfully!")
 
-                datetime.now().strftime("%d-%m-%Y"),
+    # 🎈 Balloons only here
+    st.balloons()
 
-                datetime.now().strftime("%I:%M:%S %p"),
-
-                st.session_state.staff,
-
-                ", ".join(items),
-
-                total
-
-            ])
-
-        st.session_state.order_no += 1
-
-        st.session_state.cart = []
-
-        st.success("✅ Order Saved Successfully")
-
-        st.balloons()
-
-        st.rerun()
+    st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
 
