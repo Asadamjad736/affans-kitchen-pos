@@ -1,4 +1,137 @@
+"""
+Affan's Kitchen - Restaurant Order / POS System
+------------------------------------------------
+A single-file Streamlit app for taking orders (Breakfast / Lunch / Dinner),
+printing bills/receipts, tracking daily sales, and managing inventory.
+"""
 
+import streamlit as st
+from datetime import datetime, timedelta
+import pandas as pd
+import sqlite3
+import json
+
+st.set_page_config(page_title="Affan's Kitchen - POS", page_icon="🍲", layout="wide")
+
+# Default menu structure
+DEFAULT_MENU = {
+    "Breakfast": {
+        "Aloo Paratha": 150,
+        "Chana": 120,
+        "Omelette": 80,
+        "Fried Egg": 70,
+        "Egg Masala": 130,
+        "Tea": 50,
+    },
+    "Lunch": {
+        "Daal Chawal": 200,
+        "Anda Tikki": 90,
+        "Naan": 40,
+        "Raita": 60,
+        "Salad": 50,
+        "Achaar": 30,
+    },
+    "Dinner": {
+        "Chicken Kabab": 250,
+        "Mutton Kabab": 350,
+        "Leg Piece": 300,
+        "Chest Piece": 280,
+        "Tikka Boti": 320,
+        "Malai Boti": 330,
+    },
+}
+
+RESTAURANT_NAME = "Affan's Kitchen"
+RESTAURANT_TAGLINE = "Tradition in Every Bite"
+
+# Pakistan timezone offset (UTC+5)
+PAKISTAN_OFFSET = timedelta(hours=5)
+
+# --- PASSCODE PROTECTION ---
+CORRECT_PASSCODE = "112233"
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.markdown(f"# 🔐 {RESTAURANT_NAME}")
+    st.markdown("### Please enter the passcode to continue")
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        passcode = st.text_input("Enter Passcode", type="password", key="passcode_input")
+        
+        if st.button("🔓 Unlock", use_container_width=True, type="primary"):
+            if passcode == CORRECT_PASSCODE:
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("❌ Incorrect passcode! Please try again.")
+    
+    st.stop()  # Stop execution here if not authenticated
+
+# --- LOGOUT BUTTON IN SIDEBAR ---
+with st.sidebar:
+    if st.button("🔒 Logout", use_container_width=True):
+        st.session_state.authenticated = False
+        st.rerun()
+    st.divider()
+
+# --- REST OF YOUR APP CODE BELOW ---
+
+def get_pakistan_time():
+    """Get current time in Pakistan (UTC+5)"""
+    return datetime.utcnow() + PAKISTAN_OFFSET
+
+# Initialize database
+def init_db():
+    conn = sqlite3.connect('orders.db')
+    c = conn.cursor()
+    
+    # Orders table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER,
+            date TEXT,
+            time TEXT,
+            items TEXT,
+            subtotal REAL,
+            tax_rate REAL,
+            tax_amount REAL,
+            grand_total REAL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Menu/Inventory table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS menu (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT NOT NULL,
+            item_name TEXT NOT NULL,
+            price REAL NOT NULL,
+            active INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(category, item_name)
+        )
+    ''')
+    
+    # Initialize default menu if empty
+    c.execute('SELECT COUNT(*) FROM menu')
+    if c.fetchone()[0] == 0:
+        for category, items in DEFAULT_MENU.items():
+            for item_name, price in items.items():
+                c.execute('''
+                    INSERT INTO menu (category, item_name, price)
+                    VALUES (?, ?, ?)
+                ''', (category, item_name, price))
+    
+    conn.commit()
+    conn.close()
+
+# ... (rest of your existing code remains exactly the same) ...
 """
 Affan's Kitchen - Restaurant Order / POS System
 ------------------------------------------------
