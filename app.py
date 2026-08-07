@@ -62,6 +62,10 @@ if "daily_orders" not in st.session_state:
 if "menu_qty" not in st.session_state:
     st.session_state.menu_qty = {}
 
+# Track if items were added to avoid duplicate additions
+if "items_added" not in st.session_state:
+    st.session_state.items_added = set()
+
 
 def add_to_cart(item, price, qty=1):
     """Add item to cart with specified quantity"""
@@ -98,6 +102,7 @@ def clear_cart():
     """Clear the entire cart"""
     st.session_state.cart = {}
     st.session_state.order_placed = False
+    st.session_state.items_added = set()
 
 
 def save_order_to_history():
@@ -200,33 +205,21 @@ if page == "📋 Take Order":
                     if c3.button("➖", key=f"minus_{category}_{item}"):
                         if st.session_state[qty_key] > 0:
                             st.session_state[qty_key] -= 1
+                            # Remove from cart if quantity is 0
+                            if st.session_state[qty_key] == 0:
+                                if item in st.session_state.cart:
+                                    del st.session_state.cart[item]
                         st.rerun()
                     
                     # Quantity display
                     c4.markdown(f"<div style='text-align: center; padding: 5px; font-weight: bold;'>{st.session_state[qty_key]}</div>", unsafe_allow_html=True)
                     
-                    # Plus button
+                    # Plus button - AUTOMATICALLY ADD TO CART
                     if c5.button("➕", key=f"plus_{category}_{item}"):
                         st.session_state[qty_key] += 1
+                        # Automatically add to cart
+                        add_to_cart(item, price, 1)
                         st.rerun()
-
-                # Add to cart button for the category
-                if st.button(f"🛒 Add {category} items to order", key=f"add_{category}", use_container_width=True):
-                    added_any = False
-                    for item in MENU[category].keys():
-                        qty_key = f"qty_{category}_{item}"
-                        qty = st.session_state[qty_key]
-                        if qty > 0:
-                            add_to_cart(item, MENU[category][item], qty)
-                            added_any = True
-                            # Reset quantity after adding
-                            st.session_state[qty_key] = 0
-                    
-                    if added_any:
-                        st.success(f"✅ {category} items added to order!")
-                        st.rerun()
-                    else:
-                        st.info("Set quantities using ➕ buttons before adding.")
 
     with cart_col:
         st.subheader("🧾 Current Order")
@@ -248,6 +241,12 @@ if page == "📋 Take Order":
                 # Minus button in cart
                 if c3.button("➖", key=f"cart_minus_{item}"):
                     decrease_qty(item)
+                    # Update menu quantity
+                    for category in MENU:
+                        if item in MENU[category]:
+                            qty_key = f"qty_{category}_{item}"
+                            if qty_key in st.session_state:
+                                st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
                     st.rerun()
                 
                 # Quantity display
@@ -256,6 +255,12 @@ if page == "📋 Take Order":
                 # Plus button in cart
                 if c5.button("➕", key=f"cart_plus_{item}"):
                     increase_qty(item, price)
+                    # Update menu quantity
+                    for category in MENU:
+                        if item in MENU[category]:
+                            qty_key = f"qty_{category}_{item}"
+                            if qty_key in st.session_state:
+                                st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
                     st.rerun()
 
             st.divider()
