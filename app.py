@@ -171,6 +171,7 @@ def generate_receipt_html(order):
         <tr>
             <td style="text-align: left; padding: 5px 10px;">{item['item'][:25]}</td>
             <td style="text-align: center; padding: 5px 10px;">{item['qty']}</td>
+            <td style="text-align: right; padding: 5px 10px;">Rs. {item['price']}</td>
             <td style="text-align: right; padding: 5px 10px;">Rs. {item['total']}</td>
         </tr>
         """
@@ -289,6 +290,7 @@ def generate_receipt_html(order):
                     <tr>
                         <th style="text-align: left;">Item</th>
                         <th style="text-align: center;">Qty</th>
+                        <th style="text-align: right;">Price</th>
                         <th style="text-align: right;">Amount</th>
                     </tr>
                 </thead>
@@ -322,28 +324,29 @@ def generate_receipt_text(order):
     order_time_str = f"{order['date']} {order['time']}"
 
     receipt_lines = []
-    receipt_lines.append("=" * 40)
-    receipt_lines.append(RESTAURANT_NAME.center(40))
-    receipt_lines.append(RESTAURANT_TAGLINE.center(40))
-    receipt_lines.append("=" * 40)
+    receipt_lines.append("=" * 48)
+    receipt_lines.append(RESTAURANT_NAME.center(48))
+    receipt_lines.append(RESTAURANT_TAGLINE.center(48))
+    receipt_lines.append("=" * 48)
     receipt_lines.append(f"Date: {order_time_str} (PKT)")
     receipt_lines.append(f"Order #: {order['order_id']}")
-    receipt_lines.append("-" * 40)
-    receipt_lines.append(f"{'Item':<20}{'Qty':>6}{'Amt':>14}")
-    receipt_lines.append("-" * 40)
+    receipt_lines.append("-" * 48)
+    receipt_lines.append(f"{'Item':<20}{'Qty':>4}{'Price':>10}{'Amt':>14}")
+    receipt_lines.append("-" * 48)
     for item in order["items"]:
         name = item["item"]
         qty = item["qty"]
+        price = item["price"]
         line_total = item["total"]
-        receipt_lines.append(f"{name[:20]:<20}{qty:>6}{line_total:>14}")
-    receipt_lines.append("-" * 40)
-    receipt_lines.append(f"{'Subtotal':<26}{order['subtotal']:>14}")
-    receipt_lines.append(f"{'Tax/Service':<26}{order['tax_amount']:>14}")
-    receipt_lines.append("-" * 40)
-    receipt_lines.append(f"{'TOTAL':<26}{order['grand_total']:>14}")
-    receipt_lines.append("=" * 40)
-    receipt_lines.append("Thank you for your order!".center(40))
-    receipt_lines.append("=" * 40)
+        receipt_lines.append(f"{name[:20]:<20}{qty:>4}{price:>10}{line_total:>14}")
+    receipt_lines.append("-" * 48)
+    receipt_lines.append(f"{'Subtotal':<34}{order['subtotal']:>14}")
+    receipt_lines.append(f"{'Tax/Service':<34}{order['tax_amount']:>14}")
+    receipt_lines.append("-" * 48)
+    receipt_lines.append(f"{'TOTAL':<34}{order['grand_total']:>14}")
+    receipt_lines.append("=" * 48)
+    receipt_lines.append("Thank you for your order!".center(48))
+    receipt_lines.append("=" * 48)
 
     return "\n".join(receipt_lines)
 
@@ -770,9 +773,12 @@ def render_order_taking():
                 with st.container(border=True):
                     st.markdown(
                         f"<div style='display:flex; justify-content:space-between; "
-                        f"align-items:center; margin-bottom:6px;'>"
+                        f"align-items:center; margin-bottom:2px;'>"
                         f"<span style='font-size:14.5px; font-weight:600;'>{item} <span style='color:#888; font-weight:400;'>× {qty}</span></span>"
                         f"<span style='font-size:14.5px; font-weight:700; color:#2e7d32; white-space:nowrap;'>Rs. {line_total}</span>"
+                        f"</div>"
+                        f"<div style='display:flex; justify-content:flex-end; margin-bottom:6px;'>"
+                        f"<span style='font-size:12px; color:#888;'>Rs. {price} each</span>"
                         f"</div>",
                         unsafe_allow_html=True
                     )
@@ -1005,7 +1011,7 @@ elif page == "📊 Sales Report":
                             st.write(f"**Time:** {order['time']} (PKT)")
                             st.write(f"**Items:**")
                             for item in order["items"]:
-                                st.write(f"  • {item['item']} x{item['qty']} = Rs. {item['total']}")
+                                st.write(f"  • {item['item']} x{item['qty']} @ Rs. {item['price']} = Rs. {item['total']}")
                             st.write(f"**Subtotal:** Rs. {order['subtotal']}")
                             st.write(f"**Tax ({order['tax_rate']}%):** Rs. {order['tax_amount']}")
                             st.write(f"**Grand Total:** Rs. {order['grand_total']}")
