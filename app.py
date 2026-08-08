@@ -20,40 +20,55 @@ st.markdown("""
 <style>
     /* Bigger, thumb-friendly tap targets everywhere */
     .stButton > button {
-        min-height: 44px;
+        min-height: 40px;
         font-size: 16px !important;
-        border-radius: 10px;
-        padding: 8px 12px;
+        border-radius: 8px;
+        padding: 6px 10px;
     }
     /* Prevent iOS auto-zoom on inputs (must be >=16px) */
     input, select, textarea {
         font-size: 16px !important;
     }
+    /* Shrink the built-in gaps Streamlit adds around every element/row —
+       this is the main cause of a page feeling "tall" on mobile */
+    div[data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
+    div[data-testid="stHorizontalBlock"] { gap: 0.4rem !important; }
+    div[data-testid="stElementContainer"] { margin-bottom: 0 !important; }
+    hr { margin: 0.25rem 0 !important; }
+    div[data-testid="stMetric"] { padding: 0.3rem !important; }
+
     /* Tighter padding on small screens so more fits without scrolling sideways */
     @media (max-width: 640px) {
         .block-container {
-            padding-left: 0.8rem !important;
-            padding-right: 0.8rem !important;
-            padding-top: 1rem !important;
+            padding-left: 0.6rem !important;
+            padding-right: 0.6rem !important;
+            padding-top: 0.6rem !important;
+            padding-bottom: 2rem !important;
         }
-        h1 { font-size: 1.5rem !important; }
-        h2, .stSubheader { font-size: 1.15rem !important; }
-        /* Stack the +/- qty controls a bit tighter */
+        h1 { font-size: 1.3rem !important; margin-bottom: 0.2rem !important; }
+        h2, .stSubheader { font-size: 1.05rem !important; margin: 0.3rem 0 !important; }
+        h3 { font-size: 1rem !important; }
+        .stCaption { font-size: 0.75rem !important; }
         .stButton > button {
+            padding: 6px 4px;
+            font-size: 15px !important;
+        }
+        /* Make tabs compact & scrollable on touch */
+        .stTabs [data-baseweb="tab"] {
+            font-size: 14px;
             padding: 6px 8px;
         }
-        /* Make tabs scrollable & bigger on touch */
-        .stTabs [data-baseweb="tab"] {
-            font-size: 15px;
-            padding: 8px 10px;
-        }
+        .stTabs { margin-bottom: 0.2rem !important; }
+        div[data-testid="stVerticalBlock"] { gap: 0.2rem !important; }
     }
-    /* Reduce container border padding for compact item rows */
+    /* Compact bordered item-row cards */
     div[data-testid="stVerticalBlockBorderWrapper"] {
-        padding: 0.4rem 0.6rem;
+        padding: 0.3rem 0.5rem;
+        margin-bottom: 0.2rem;
     }
 </style>
 """, unsafe_allow_html=True)
+
 
 # Default menu structure
 DEFAULT_MENU = {
@@ -631,15 +646,12 @@ def save_order_to_history():
     st.session_state.last_order = order
 
 
-# App Header
-current_time = get_pakistan_time()
+# App Header — one compact live clock line instead of 3 stacked time displays
 st.markdown(f"# 🍲 {RESTAURANT_NAME}")
-st.caption(RESTAURANT_TAGLINE)
-st.caption(f"🕐 Pakistan Time: {current_time.strftime('%d-%m-%Y %I:%M %p')}")
+st.markdown(f"<p style='margin:0 0 0.3rem 0; color:#888; font-size:0.85rem;'>{RESTAURANT_TAGLINE}</p>", unsafe_allow_html=True)
 
-# Show live clock
 st.components.v1.html(f"""
-    <div style="text-align: right; font-size: 16px; color: #666; padding: 5px;">
+    <div style="text-align: left; font-size: 13px; color: #888; font-family: sans-serif;">
         <span id="live-clock"></span>
     </div>
     <script>
@@ -656,14 +668,12 @@ st.components.v1.html(f"""
                 second: '2-digit',
                 hour12: true
             }};
-            document.getElementById('live-clock').innerHTML = '🕐 ' + pakistan.toLocaleString('en-GB', options);
+            document.getElementById('live-clock').innerHTML = '🕐 ' + pakistan.toLocaleString('en-GB', options) + ' (PKT)';
         }}
         updateClock();
         setInterval(updateClock, 1000);
     </script>
-""", height=40)
-
-st.divider()
+""", height=22)
 
 # Navigation
 page = st.sidebar.selectbox("📌 Navigation", ["📋 Take Order", "📊 Sales Report", "📦 Inventory Management"])
@@ -692,15 +702,19 @@ def render_order_taking():
             for tab, category in zip(tabs, MENU.keys()):
                 with tab:
                     for item, price in MENU[category].items():
-                        c1, c2, c3, c4, c5 = st.columns([2, 1, 0.5, 0.5, 0.5])
-                        c1.write(f"**{item}**")
-                        c2.write(f"Rs. {price}")
-
                         qty_key = f"qty_{category}_{item}"
                         if qty_key not in st.session_state:
                             st.session_state[qty_key] = 0
 
-                        if c3.button("➖", key=f"minus_{category}_{item}"):
+                        c1, c2, c3, c4 = st.columns([3, 0.8, 0.7, 0.8], gap="small")
+                        c1.markdown(
+                            f"<div style='line-height:1.25; padding-top:6px;'>"
+                            f"<b>{item}</b><br>"
+                            f"<span style='color:#888; font-size:12.5px;'>Rs. {price}</span></div>",
+                            unsafe_allow_html=True
+                        )
+
+                        if c2.button("➖", key=f"minus_{category}_{item}", use_container_width=True):
                             if st.session_state[qty_key] > 0:
                                 st.session_state[qty_key] -= 1
                                 if item in st.session_state.cart:
@@ -708,9 +722,9 @@ def render_order_taking():
                                     st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
                             st.rerun()
 
-                        c4.markdown(f"<div style='text-align: center; padding: 5px; font-weight: bold;'>{st.session_state[qty_key]}</div>", unsafe_allow_html=True)
+                        c3.markdown(f"<div style='text-align:center; padding-top:8px; font-weight:700;'>{st.session_state[qty_key]}</div>", unsafe_allow_html=True)
 
-                        if c5.button("➕", key=f"plus_{category}_{item}"):
+                        if c4.button("➕", key=f"plus_{category}_{item}", use_container_width=True):
                             st.session_state[qty_key] += 1
                             add_to_cart(item, price, 1)
                             st.rerun()
@@ -728,11 +742,15 @@ def render_order_taking():
                 line_total = qty * price
                 total += line_total
 
-                c1, c2, c3, c4, c5 = st.columns([2, 1, 0.4, 0.4, 0.4])
-                c1.write(f"**{item}**")
-                c2.write(f"Rs. {line_total}")
+                c1, c2, c3, c4 = st.columns([3, 0.8, 0.7, 0.8], gap="small")
+                c1.markdown(
+                    f"<div style='line-height:1.25; padding-top:6px;'>"
+                    f"<b>{item}</b><br>"
+                    f"<span style='color:#888; font-size:12.5px;'>Rs. {line_total}</span></div>",
+                    unsafe_allow_html=True
+                )
 
-                if c3.button("➖", key=f"cart_minus_{item}"):
+                if c2.button("➖", key=f"cart_minus_{item}", use_container_width=True):
                     decrease_qty(item)
                     for category in MENU:
                         if item in MENU[category]:
@@ -741,9 +759,9 @@ def render_order_taking():
                                 st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
                     st.rerun()
 
-                c4.markdown(f"<div style='text-align: center; font-size: 14px;'>{qty}</div>", unsafe_allow_html=True)
+                c3.markdown(f"<div style='text-align:center; padding-top:8px; font-weight:700;'>{qty}</div>", unsafe_allow_html=True)
 
-                if c5.button("➕", key=f"cart_plus_{item}"):
+                if c4.button("➕", key=f"cart_plus_{item}", use_container_width=True):
                     increase_qty(item, price)
                     for category in MENU:
                         if item in MENU[category]:
@@ -759,9 +777,13 @@ def render_order_taking():
             tax_amount = round(total * tax_rate / 100)
             grand_total = total + tax_amount
 
-            st.write(f"Subtotal: **Rs. {total}**")
-            st.write(f"Tax/Service ({tax_rate}%): **Rs. {tax_amount}**")
-            st.markdown(f"### Grand Total: Rs. {grand_total}")
+            st.markdown(
+                f"<div style='font-size:14px; line-height:1.6; margin-top:4px;'>"
+                f"Subtotal: <b>Rs. {total}</b><br>"
+                f"Tax/Service ({tax_rate}%): <b>Rs. {tax_amount}</b></div>"
+                f"<div style='font-size:19px; font-weight:800; margin:4px 0 6px 0;'>Grand Total: Rs. {grand_total}</div>",
+                unsafe_allow_html=True
+            )
 
             col_a, col_b = st.columns(2)
             with col_a:
