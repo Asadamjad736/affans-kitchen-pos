@@ -66,6 +66,24 @@ st.markdown("""
         padding: 0.3rem 0.5rem;
         margin-bottom: 0.2rem;
     }
+
+    /* Keep the −/qty/+ stepper buttons in one row on every screen size —
+       Streamlit auto-stacks st.columns vertically below 640px, which is
+       every phone, so it must be overridden just for these keyed rows. */
+    div[class*="st-key-stepper_"] > div[data-testid="stHorizontalBlock"],
+    div[class*="st-key-cart_stepper_"] > div[data-testid="stHorizontalBlock"],
+    div[class*="st-key-stepper_"][data-testid="stHorizontalBlock"],
+    div[class*="st-key-cart_stepper_"][data-testid="stHorizontalBlock"] {
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        gap: 0.4rem !important;
+    }
+    div[class*="st-key-stepper_"] div[data-testid="stColumn"],
+    div[class*="st-key-cart_stepper_"] div[data-testid="stColumn"] {
+        width: 33.33% !important;
+        flex: 1 1 0 !important;
+        min-width: 0 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -716,7 +734,7 @@ def render_order_taking():
                                 unsafe_allow_html=True
                             )
 
-                            b1, b2, b3 = st.columns([1, 1, 1], gap="small")
+                            b1, b2, b3 = st.columns([1, 1, 1], gap="small", key=f"stepper_{category}_{item}")
                             if b1.button("➖", key=f"minus_{category}_{item}", use_container_width=True):
                                 if st.session_state[qty_key] > 0:
                                     st.session_state[qty_key] -= 1
@@ -758,7 +776,7 @@ def render_order_taking():
                         unsafe_allow_html=True
                     )
 
-                    b1, b2, b3 = st.columns([1, 1, 1], gap="small")
+                    b1, b2, b3 = st.columns([1, 1, 1], gap="small", key=f"cart_stepper_{item}")
                     if b1.button("➖", key=f"cart_minus_{item}", use_container_width=True):
                         decrease_qty(item)
                         for category in MENU:
