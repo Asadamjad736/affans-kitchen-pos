@@ -36,7 +36,6 @@ st.markdown("""
     div[data-testid="stElementContainer"] { margin-bottom: 0 !important; }
     hr { margin: 0.25rem 0 !important; }
     div[data-testid="stMetric"] { padding: 0.3rem !important; }
-    
 /* Tighter padding on small screens so more fits without scrolling sideways */
     @media (max-width: 640px) {
         .block-container {
