@@ -734,24 +734,25 @@ def render_order_taking():
                                 unsafe_allow_html=True
                             )
 
-                            b1, b2, b3 = st.columns([1, 1, 1], gap="small", key=f"stepper_{category}_{item}")
-                            if b1.button("➖", key=f"minus_{category}_{item}", use_container_width=True):
-                                if st.session_state[qty_key] > 0:
-                                    st.session_state[qty_key] -= 1
-                                    if item in st.session_state.cart:
-                                        decrease_qty(item)
-                                        st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
-                                st.rerun()
+                            with st.container(key=f"stepper_{category}_{item}"):
+                                b1, b2, b3 = st.columns([1, 1, 1], gap="small")
+                                if b1.button("➖", key=f"minus_{category}_{item}", use_container_width=True):
+                                    if st.session_state[qty_key] > 0:
+                                        st.session_state[qty_key] -= 1
+                                        if item in st.session_state.cart:
+                                            decrease_qty(item)
+                                            st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
+                                    st.rerun()
 
-                            b2.markdown(
-                                f"<div style='text-align:center; padding-top:9px; font-size:16px; font-weight:700;'>{st.session_state[qty_key]}</div>",
-                                unsafe_allow_html=True
-                            )
+                                b2.markdown(
+                                    f"<div style='text-align:center; padding-top:9px; font-size:16px; font-weight:700;'>{st.session_state[qty_key]}</div>",
+                                    unsafe_allow_html=True
+                                )
 
-                            if b3.button("➕", key=f"plus_{category}_{item}", use_container_width=True):
-                                st.session_state[qty_key] += 1
-                                add_to_cart(item, price, 1)
-                                st.rerun()
+                                if b3.button("➕", key=f"plus_{category}_{item}", use_container_width=True):
+                                    st.session_state[qty_key] += 1
+                                    add_to_cart(item, price, 1)
+                                    st.rerun()
 
     with cart_col:
         st.subheader("🧾 Current Order")
@@ -776,26 +777,27 @@ def render_order_taking():
                         unsafe_allow_html=True
                     )
 
-                    b1, b2, b3 = st.columns([1, 1, 1], gap="small", key=f"cart_stepper_{item}")
-                    if b1.button("➖", key=f"cart_minus_{item}", use_container_width=True):
-                        decrease_qty(item)
-                        for category in MENU:
-                            if item in MENU[category]:
-                                qty_key = f"qty_{category}_{item}"
-                                if qty_key in st.session_state:
-                                    st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
-                        st.rerun()
+                    with st.container(key=f"cart_stepper_{item}"):
+                        b1, b2, b3 = st.columns([1, 1, 1], gap="small")
+                        if b1.button("➖", key=f"cart_minus_{item}", use_container_width=True):
+                            decrease_qty(item)
+                            for category in MENU:
+                                if item in MENU[category]:
+                                    qty_key = f"qty_{category}_{item}"
+                                    if qty_key in st.session_state:
+                                        st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
+                            st.rerun()
 
-                    b2.markdown(f"<div style='text-align:center; padding-top:9px; font-size:16px; font-weight:700;'>{qty}</div>", unsafe_allow_html=True)
+                        b2.markdown(f"<div style='text-align:center; padding-top:9px; font-size:16px; font-weight:700;'>{qty}</div>", unsafe_allow_html=True)
 
-                    if b3.button("➕", key=f"cart_plus_{item}", use_container_width=True):
-                        increase_qty(item, price)
-                        for category in MENU:
-                            if item in MENU[category]:
-                                qty_key = f"qty_{category}_{item}"
-                                if qty_key in st.session_state:
-                                    st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
-                        st.rerun()
+                        if b3.button("➕", key=f"cart_plus_{item}", use_container_width=True):
+                            increase_qty(item, price)
+                            for category in MENU:
+                                if item in MENU[category]:
+                                    qty_key = f"qty_{category}_{item}"
+                                    if qty_key in st.session_state:
+                                        st.session_state[qty_key] = st.session_state.cart.get(item, {}).get("qty", 0)
+                            st.rerun()
 
             st.divider()
 
