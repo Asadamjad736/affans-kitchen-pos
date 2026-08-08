@@ -36,7 +36,8 @@ st.markdown("""
     div[data-testid="stElementContainer"] { margin-bottom: 0 !important; }
     hr { margin: 0.25rem 0 !important; }
     div[data-testid="stMetric"] { padding: 0.3rem !important; }
-/* Tighter padding on small screens so more fits without scrolling sideways */
+
+    /* Tighter padding on small screens so more fits without scrolling sideways */
     @media (max-width: 640px) {
         .block-container {
             padding-left: 0.6rem !important;
@@ -64,6 +65,20 @@ st.markdown("""
         div[class*="st-key-cart_stepper_"] {
             margin-top: 6px !important;
         }
+
+        /* Shrink the receipt/bill code block so it fits without horizontal scroll on phones */
+        div[data-testid="stCodeBlock"] pre,
+        div[data-testid="stCodeBlock"] code {
+            font-size: 9px !important;
+            line-height: 1.3 !important;
+            white-space: pre !important;
+        }
+    }
+
+    /* Compact bordered item-row cards */
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        padding: 0.3rem 0.5rem;
+        margin-bottom: 0.2rem;
     }
 
     /* Keep the −/qty/+ stepper buttons in one row on every screen size —
